@@ -70,6 +70,33 @@ export type Database = {
           },
         ]
       }
+      search_keywords: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          description: string | null
+          id: string
+          is_active: boolean | null
+          keyword: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          is_active?: boolean | null
+          keyword: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          description?: string | null
+          id?: string
+          is_active?: boolean | null
+          keyword?: string
+        }
+        Relationships: []
+      }
       search_queries: {
         Row: {
           created_at: string | null
