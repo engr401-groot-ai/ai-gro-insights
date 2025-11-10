@@ -170,7 +170,10 @@ ${context}`
           url: seg.video_url,
           timestamp: seg.start_time,
           publishedAt: seg.published_at,
-          similarity: seg.similarity
+          similarity: seg.similarity,
+          segmentText: seg.segment_text,
+          startTime: seg.start_time,
+          endTime: seg.end_time
         }))
       });
 
@@ -187,7 +190,10 @@ ${context}`
           url: seg.video_url,
           timestamp: formatTime(seg.start_time),
           publishedAt: seg.published_at,
-          similarity: Math.round(seg.similarity * 100)
+          similarity: Math.round(seg.similarity * 100),
+          segmentText: seg.segment_text,
+          startTime: seg.start_time,
+          endTime: seg.end_time
         })) || []
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }

@@ -11,6 +11,9 @@ interface ChatMessage {
     timestamp: string;
     publishedAt: string;
     similarity: number;
+    segmentText: string;
+    startTime: number;
+    endTime: number;
   }>;
 }
 

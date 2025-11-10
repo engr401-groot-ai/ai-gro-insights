@@ -2,13 +2,20 @@ import { useState, useRef, useEffect } from 'react';
 import { Button } from './ui/button';
 import { Textarea } from './ui/textarea';
 import { Card } from './ui/card';
-import { Send, Bot, User, ExternalLink } from 'lucide-react';
+import { Send, Bot, User, ExternalLink, ChevronDown, ChevronUp } from 'lucide-react';
 import { useRagChat } from '@/hooks/useRagChat';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collapsible';
 
 export const ChatInterface = () => {
   const [input, setInput] = useState('');
+  const [expandedSources, setExpandedSources] = useState<Record<string, boolean>>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const { messages, isLoading, sendMessage } = useRagChat();
+
+  const toggleSource = (messageIdx: number, sourceIdx: number) => {
+    const key = `${messageIdx}-${sourceIdx}`;
+    setExpandedSources(prev => ({ ...prev, [key]: !prev[key] }));
+  };
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -67,23 +74,70 @@ export const ChatInterface = () => {
               {message.sources && message.sources.length > 0 && (
                 <div className="ml-11 space-y-2">
                   <p className="text-xs font-medium text-muted-foreground">Sources:</p>
-                  {message.sources.map((source, sourceIdx) => (
-                    <a
-                      key={sourceIdx}
-                      href={source.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-start gap-2 text-xs p-2 rounded border border-border hover:bg-accent/5 transition-colors"
-                    >
-                      <ExternalLink className="h-3 w-3 mt-0.5 flex-shrink-0 text-primary" />
-                      <div className="flex-1">
-                        <p className="font-medium text-foreground">{source.videoTitle}</p>
-                        <p className="text-muted-foreground">
-                          {source.channel} • {source.publishedAt} • {source.timestamp} • {source.similarity}% relevant
-                        </p>
-                      </div>
-                    </a>
-                  ))}
+                  {message.sources.map((source, sourceIdx) => {
+                    const isExpanded = expandedSources[`${idx}-${sourceIdx}`];
+                    return (
+                      <Collapsible
+                        key={sourceIdx}
+                        open={isExpanded}
+                        onOpenChange={() => toggleSource(idx, sourceIdx)}
+                      >
+                        <div className="border border-border rounded-lg overflow-hidden">
+                          <div className="flex items-start gap-2 p-3 hover:bg-accent/5 transition-colors">
+                            <ExternalLink className="h-4 w-4 mt-0.5 flex-shrink-0 text-primary" />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex-1 min-w-0">
+                                  <p className="font-medium text-sm text-foreground truncate">
+                                    {source.videoTitle}
+                                  </p>
+                                  <p className="text-xs text-muted-foreground mt-0.5">
+                                    {source.channel} • {new Date(source.publishedAt).toLocaleDateString()}
+                                  </p>
+                                  <p className="text-xs text-primary mt-1">
+                                    At {source.timestamp} • {source.similarity}% relevant
+                                  </p>
+                                </div>
+                                <CollapsibleTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-6 w-6 p-0 flex-shrink-0"
+                                  >
+                                    {isExpanded ? (
+                                      <ChevronUp className="h-4 w-4" />
+                                    ) : (
+                                      <ChevronDown className="h-4 w-4" />
+                                    )}
+                                  </Button>
+                                </CollapsibleTrigger>
+                              </div>
+                            </div>
+                          </div>
+                          
+                          <CollapsibleContent>
+                            <div className="px-3 pb-3 pt-1 space-y-2 bg-muted/30">
+                              <div className="text-xs">
+                                <p className="font-medium text-foreground mb-1">Transcript Segment:</p>
+                                <p className="text-muted-foreground leading-relaxed italic">
+                                  "{source.segmentText}"
+                                </p>
+                              </div>
+                              <a
+                                href={`${source.url}&t=${source.startTime}s`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                              >
+                                <ExternalLink className="h-3 w-3" />
+                                Watch at {source.timestamp}
+                              </a>
+                            </div>
+                          </CollapsibleContent>
+                        </div>
+                      </Collapsible>
+                    );
+                  })}
                 </div>
               )}
             </div>
