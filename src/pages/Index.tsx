@@ -47,7 +47,7 @@ const Index = () => {
         
         setStats({
           totalVideos: videos.length,
-          uhMentions: videos.filter(v => v.status === 'processed').length,
+          uhMentions: videos.filter(v => v.status === 'completed').length,
           lastUpdated: videos.length > 0 ? timeString : 'Never'
         });
       }
@@ -68,6 +68,7 @@ const Index = () => {
           status,
           youtube_channels (channel_name)
         `)
+        .eq('status', 'completed')
         .order('published_at', { ascending: false })
         .limit(5);
 

@@ -101,10 +101,10 @@ serve(async (req) => {
       }
     }
 
-    // Update video status
+    // Update video status to show it's fully processed
     await supabase
       .from('videos')
-      .update({ status: 'processed' })
+      .update({ status: 'completed' })
       .eq('id', videoId);
 
     console.log(`Embeddings generation completed. Processed ${processedCount} segments`);

@@ -175,7 +175,7 @@ serve(async (req) => {
     // Update video status
     await supabase
       .from('videos')
-      .update({ status: 'transcribed' })
+      .update({ status: 'completed' })
       .eq('id', videoId);
 
     console.log(`✓ Transcription completed for: ${video.title}`);

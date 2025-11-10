@@ -95,7 +95,7 @@ serve(async (req) => {
       const { data: transcribedVideos, error: videosError } = await supabase
         .from('videos')
         .select('id, title')
-        .eq('status', 'transcribed')
+        .eq('status', 'completed')
         .order('published_at', { ascending: false })
         .limit(5);
 

@@ -41,6 +41,11 @@ export const AdminPanel = () => {
           variant: 'destructive',
         });
       }
+
+      // Reload stats after pipeline completes
+      setTimeout(() => {
+        window.location.reload();
+      }, 2000);
     } catch (error) {
       console.error('Error running pipeline:', error);
       toast({
