@@ -13,6 +13,8 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 const Index = () => {
   const navigate = useNavigate();
@@ -25,6 +27,9 @@ const Index = () => {
     lastUpdated: "Loading..."
   });
   const [recentVideos, setRecentVideos] = useState<any[]>([]);
+  const [dialogVideos, setDialogVideos] = useState<any[]>([]);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [dialogTitle, setDialogTitle] = useState("");
   const { toast } = useToast();
   const { results: searchResults, isSearching, search } = useSemanticSearch();
 
@@ -116,6 +121,69 @@ const Index = () => {
     navigate("/auth");
   };
 
+  const showAllVideos = async () => {
+    try {
+      const { data: videos, error } = await supabase
+        .from('videos')
+        .select(`
+          id,
+          title,
+          url,
+          published_at,
+          status,
+          youtube_channels (channel_name)
+        `)
+        .order('published_at', { ascending: false });
+
+      if (!error && videos) {
+        setDialogVideos(videos.map(v => ({
+          id: v.id,
+          title: v.title,
+          channel: (v.youtube_channels as any)?.channel_name || 'Unknown',
+          date: new Date(v.published_at).toLocaleDateString(),
+          url: v.url,
+          status: v.status
+        })));
+        setDialogTitle("All Videos");
+        setDialogOpen(true);
+      }
+    } catch (error) {
+      console.error('Error loading videos:', error);
+    }
+  };
+
+  const showProcessedVideos = async () => {
+    try {
+      const { data: videos, error } = await supabase
+        .from('videos')
+        .select(`
+          id,
+          title,
+          url,
+          published_at,
+          status,
+          youtube_channels (channel_name)
+        `)
+        .eq('status', 'completed')
+        .order('published_at', { ascending: false });
+
+      if (!error && videos) {
+        setDialogVideos(videos.map(v => ({
+          id: v.id,
+          title: v.title,
+          channel: (v.youtube_channels as any)?.channel_name || 'Unknown',
+          date: new Date(v.published_at).toLocaleDateString(),
+          url: v.url,
+          status: v.status
+        })));
+        setDialogTitle("Processed Videos");
+        setDialogOpen(true);
+      }
+    } catch (error) {
+      console.error('Error loading processed videos:', error);
+    }
+  };
+
   if (authLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -166,7 +234,7 @@ const Index = () => {
             value={stats.totalVideos.toString()}
             icon={Database}
             description="Indexed videos"
-            onClick={() => window.open(`https://supabase.com/dashboard/project/adzcrombzkphrqavcnbn/editor/videos`, '_blank', 'noopener,noreferrer')}
+            onClick={showAllVideos}
           />
           <StatsCard
             title="Last Updated"
@@ -179,7 +247,7 @@ const Index = () => {
             value={stats.uhMentions.toString()}
             icon={FileText}
             description="Ready to search"
-            onClick={() => window.open(`https://supabase.com/dashboard/project/adzcrombzkphrqavcnbn/editor/videos?filter=status%3Aeq%3Acompleted`, '_blank', 'noopener,noreferrer')}
+            onClick={showProcessedVideos}
           />
           <StatsCard
             title="Channels"
@@ -264,6 +332,22 @@ const Index = () => {
           <p>Automated monitoring of legislative content • Updated continuously</p>
         </div>
       </footer>
+
+      {/* Video List Dialog */}
+      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+        <DialogContent className="max-w-4xl max-h-[80vh]">
+          <DialogHeader>
+            <DialogTitle>{dialogTitle} ({dialogVideos.length})</DialogTitle>
+          </DialogHeader>
+          <ScrollArea className="h-[60vh] pr-4">
+            <div className="space-y-3">
+              {dialogVideos.map((video) => (
+                <VideoCard key={video.id} {...video} />
+              ))}
+            </div>
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 };
