@@ -130,6 +130,7 @@ const Index = () => {
             value={stats.totalVideos.toString()}
             icon={Database}
             description="Indexed videos"
+            onClick={() => window.open(`https://supabase.com/dashboard/project/adzcrombzkphrqavcnbn/editor/videos`, '_blank', 'noopener,noreferrer')}
           />
           <StatsCard
             title="Last Updated"
@@ -142,6 +143,7 @@ const Index = () => {
             value={stats.uhMentions.toString()}
             icon={FileText}
             description="Ready to search"
+            onClick={() => window.open(`https://supabase.com/dashboard/project/adzcrombzkphrqavcnbn/editor/videos?filter=status%3Aeq%3Acompleted`, '_blank', 'noopener,noreferrer')}
           />
           <StatsCard
             title="Channels"

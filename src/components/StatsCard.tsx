@@ -6,11 +6,15 @@ interface StatsCardProps {
   value: string | number;
   icon: LucideIcon;
   description?: string;
+  onClick?: () => void;
 }
 
-export const StatsCard = ({ title, value, icon: Icon, description }: StatsCardProps) => {
+export const StatsCard = ({ title, value, icon: Icon, description, onClick }: StatsCardProps) => {
   return (
-    <Card className="p-6 bg-gradient-card shadow-md border-border hover:shadow-lg transition-shadow">
+    <Card 
+      className={`p-6 bg-gradient-card shadow-md border-border hover:shadow-lg transition-all ${onClick ? 'cursor-pointer hover:scale-[1.02]' : ''}`}
+      onClick={onClick}
+    >
       <div className="flex items-center justify-between">
         <div className="space-y-1">
           <p className="text-sm font-medium text-muted-foreground">{title}</p>
