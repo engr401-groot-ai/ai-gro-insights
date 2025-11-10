@@ -12,6 +12,7 @@ export const AdminPanel = () => {
   const [isFetching, setIsFetching] = useState(false);
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isGeneratingEmbeddings, setIsGeneratingEmbeddings] = useState(false);
+  const [isBatchGenerating, setIsBatchGenerating] = useState(false);
   const { toast } = useToast();
 
   const runFullPipeline = async () => {
@@ -174,6 +175,39 @@ export const AdminPanel = () => {
     }
   };
 
+  const batchGenerateAllEmbeddings = async () => {
+    setIsBatchGenerating(true);
+    try {
+      toast({
+        title: 'Batch Processing Started',
+        description: 'Generating embeddings for all videos. This may take several minutes...',
+      });
+
+      const { data, error } = await supabase.functions.invoke('batch-generate-embeddings');
+      
+      if (error) throw error;
+      
+      toast({
+        title: 'Batch Processing Complete! 🎉',
+        description: `Processed ${data.totalVideos} videos`,
+      });
+
+      // Reload after completion
+      setTimeout(() => {
+        window.location.reload();
+      }, 2000);
+    } catch (error) {
+      console.error('Error in batch processing:', error);
+      toast({
+        title: 'Batch Processing Error',
+        description: 'Failed to process all videos. Check console for details.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsBatchGenerating(false);
+    }
+  };
+
   return (
     <Card className="p-6 space-y-4 bg-gradient-card border-2 border-primary/20">
       <div className="flex items-center gap-2 pb-4 border-b border-border">
@@ -308,6 +342,37 @@ export const AdminPanel = () => {
                 )}
               </Button>
             </div>
+            </div>
+          </div>
+
+          <div className="pt-4 border-t border-border">
+            <div className="p-4 bg-primary/5 border border-primary/20 rounded-lg">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="font-semibold text-foreground">⚡ Batch Process All Videos</p>
+                  <p className="text-sm text-muted-foreground">
+                    Generate embeddings for ALL videos that are missing them
+                  </p>
+                </div>
+                <Button
+                  onClick={batchGenerateAllEmbeddings}
+                  disabled={isBatchGenerating}
+                  variant="outline"
+                  className="gap-2"
+                >
+                  {isBatchGenerating ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Processing...
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles className="h-4 w-4" />
+                      Batch Generate All
+                    </>
+                  )}
+                </Button>
+              </div>
             </div>
           </div>
 

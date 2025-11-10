@@ -25,39 +25,86 @@ serve(async (req) => {
     
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    console.log(`Performing semantic search for: "${query}"`);
+    const isShortQuery = query.trim().split(/\s+/).length <= 3;
+    console.log(`Performing ${isShortQuery ? 'hybrid' : 'semantic'} search for: "${query}"`);
 
-    // Generate embedding for the query
-    const embeddingResponse = await fetch('https://api.openai.com/v1/embeddings', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${openaiApiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'text-embedding-3-small',
-        input: query,
-      }),
-    });
+    let results;
 
-    if (!embeddingResponse.ok) {
-      throw new Error('Failed to generate query embedding');
-    }
+    if (isShortQuery) {
+      // Use keyword search for short queries (better for acronyms like "HRE")
+      const searchPattern = `%${query}%`;
+      const { data: keywordResults, error: keywordError } = await supabase
+        .from('transcript_segments')
+        .select(`
+          id,
+          video_id,
+          segment_text,
+          start_time,
+          end_time,
+          videos!inner (
+            id,
+            title,
+            url,
+            published_at,
+            youtube_channels!inner (
+              channel_name
+            )
+          )
+        `)
+        .ilike('segment_text', searchPattern)
+        .not('embedding', 'is', null)
+        .limit(matchCount);
 
-    const embeddingData = await embeddingResponse.json();
-    const queryEmbedding = embeddingData.data[0].embedding;
+      if (keywordError) throw keywordError;
 
-    // Search for similar segments using the database function
-    const { data: results, error: searchError } = await supabase
-      .rpc('search_transcript_segments', {
-        query_embedding: queryEmbedding,
-        match_threshold: matchThreshold,
-        match_count: matchCount
+      // Transform to match semantic search format
+      results = keywordResults?.map((r: any) => ({
+        id: r.id,
+        video_id: r.video_id,
+        segment_text: r.segment_text,
+        start_time: r.start_time,
+        end_time: r.end_time,
+        similarity: 0.9, // High fixed score for keyword matches
+        video_title: r.videos.title,
+        video_url: r.videos.url,
+        channel_name: r.videos.youtube_channels.channel_name,
+        published_at: r.videos.published_at
+      })) || [];
+    } else {
+      // Use semantic search for longer queries
+      const embeddingResponse = await fetch('https://api.openai.com/v1/embeddings', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${openaiApiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'text-embedding-3-small',
+          input: query,
+        }),
       });
 
-    if (searchError) {
-      console.error('Search error:', searchError);
-      throw searchError;
+      if (!embeddingResponse.ok) {
+        throw new Error('Failed to generate query embedding');
+      }
+
+      const embeddingData = await embeddingResponse.json();
+      const queryEmbedding = embeddingData.data[0].embedding;
+
+      // Search for similar segments using the database function
+      const { data: semanticResults, error: searchError } = await supabase
+        .rpc('search_transcript_segments', {
+          query_embedding: queryEmbedding,
+          match_threshold: matchThreshold,
+          match_count: matchCount
+        });
+
+      if (searchError) {
+        console.error('Search error:', searchError);
+        throw searchError;
+      }
+      
+      results = semanticResults;
     }
 
     // Log the search query
