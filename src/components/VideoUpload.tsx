@@ -3,32 +3,20 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Upload, Video, Loader2 } from "lucide-react";
+import { Upload, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 
 export const VideoUpload = () => {
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
-  const [uploading, setUploading] = useState(false);
+  const [description, setDescription] = useState("");
+  const [isUploading, setIsUploading] = useState(false);
   const { toast } = useToast();
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFile = e.target.files?.[0];
-    if (selectedFile) {
-      // Check file size (500MB limit)
-      if (selectedFile.size > 524288000) {
-        toast({
-          title: "File too large",
-          description: "Please select a video under 500MB",
-          variant: "destructive",
-        });
-        return;
-      }
-      setFile(selectedFile);
-      if (!title) {
-        setTitle(selectedFile.name.replace(/\.[^/.]+$/, ""));
-      }
+    if (e.target.files && e.target.files[0]) {
+      setFile(e.target.files[0]);
     }
   };
 
@@ -36,13 +24,13 @@ export const VideoUpload = () => {
     if (!file || !title) {
       toast({
         title: "Missing information",
-        description: "Please select a video and provide a title",
+        description: "Please provide both a video file and a title",
         variant: "destructive",
       });
       return;
     }
 
-    setUploading(true);
+    setIsUploading(true);
 
     try {
       // Upload video to storage
@@ -61,110 +49,118 @@ export const VideoUpload = () => {
         .from('user-videos')
         .getPublicUrl(filePath);
 
-      // Create video record
-      const { data: video, error: videoError } = await supabase
-        .from('videos')
-        .insert({
-          title: title,
-          description: 'User uploaded video',
-          url: publicUrl,
-          youtube_id: `custom-${fileName}`,
-          published_at: new Date().toISOString(),
-          status: 'pending',
-          channel_id: null
-        })
-        .select()
+      // Get a channel to associate with (just grab the first one)
+      const { data: channelData } = await supabase
+        .from('youtube_channels')
+        .select('id')
+        .limit(1)
         .single();
 
-      if (videoError) throw videoError;
+      // Insert video metadata into database
+      const { error: dbError } = await supabase
+        .from('videos')
+        .insert({
+          title,
+          description,
+          url: publicUrl,
+          youtube_id: fileName, // Using filename as unique ID
+          published_at: new Date().toISOString(),
+          status: 'pending',
+          channel_id: channelData?.id || null
+        });
+
+      if (dbError) throw dbError;
 
       toast({
         title: "Video uploaded successfully!",
-        description: "The video will be processed shortly. Check back soon.",
+        description: "The video will be processed when you run the pipeline.",
       });
 
       // Reset form
       setFile(null);
       setTitle("");
-      if (document.querySelector('input[type="file"]')) {
-        (document.querySelector('input[type="file"]') as HTMLInputElement).value = '';
-      }
-
+      setDescription("");
+      (document.getElementById('video-file') as HTMLInputElement).value = '';
+      
     } catch (error) {
-      console.error('Error uploading video:', error);
+      console.error('Upload error:', error);
       toast({
         title: "Upload failed",
         description: error instanceof Error ? error.message : "Failed to upload video",
         variant: "destructive",
       });
     } finally {
-      setUploading(false);
+      setIsUploading(false);
     }
   };
 
   return (
     <Card className="p-6 bg-gradient-card border-border">
       <div className="space-y-4">
-        <div className="flex items-center gap-2">
-          <Video className="h-5 w-5 text-primary" />
-          <h3 className="text-lg font-semibold text-foreground">Upload Video</h3>
+        <div>
+          <h3 className="text-lg font-semibold text-foreground mb-2">Upload Custom Video</h3>
+          <p className="text-sm text-muted-foreground">
+            Upload your own video to transcribe and add to the searchable database
+          </p>
         </div>
 
         <div className="space-y-4">
-          <div className="space-y-2">
+          <div>
+            <Label htmlFor="title">Video Title</Label>
+            <Input
+              id="title"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Enter video title"
+              disabled={isUploading}
+            />
+          </div>
+
+          <div>
+            <Label htmlFor="description">Description (Optional)</Label>
+            <Input
+              id="description"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Enter video description"
+              disabled={isUploading}
+            />
+          </div>
+
+          <div>
             <Label htmlFor="video-file">Video File (MP4, MOV, AVI, WebM - Max 500MB)</Label>
             <Input
               id="video-file"
               type="file"
-              accept="video/*"
+              accept="video/mp4,video/quicktime,video/x-msvideo,video/webm"
               onChange={handleFileChange}
-              disabled={uploading}
+              disabled={isUploading}
             />
+            {file && (
+              <p className="text-sm text-muted-foreground mt-1">
+                Selected: {file.name} ({(file.size / 1024 / 1024).toFixed(2)} MB)
+              </p>
+            )}
           </div>
-
-          {file && (
-            <div className="space-y-2">
-              <Label htmlFor="video-title">Video Title</Label>
-              <Input
-                id="video-title"
-                type="text"
-                placeholder="Enter video title"
-                value={title}
-                onChange={(e) => setTitle(e.target.value)}
-                disabled={uploading}
-              />
-            </div>
-          )}
-
-          {file && (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Video className="h-4 w-4" />
-              <span>{file.name} ({(file.size / 1024 / 1024).toFixed(2)} MB)</span>
-            </div>
-          )}
 
           <Button
             onClick={handleUpload}
-            disabled={!file || !title || uploading}
+            disabled={!file || !title || isUploading}
             className="w-full"
           >
-            {uploading ? (
+            {isUploading ? (
               <>
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 Uploading...
               </>
             ) : (
               <>
-                <Upload className="h-4 w-4 mr-2" />
+                <Upload className="mr-2 h-4 w-4" />
                 Upload Video
               </>
             )}
           </Button>
         </div>
-
-        <p className="text-xs text-muted-foreground">
-          After upload, the video will be transcribed and indexed for search. This may take several minutes depending on video length.
-        </p>
       </div>
     </Card>
   );

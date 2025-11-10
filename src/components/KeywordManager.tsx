@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Tag, Plus, X, Loader2 } from "lucide-react";
+import { Plus, Trash2, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -12,23 +12,19 @@ interface Keyword {
   id: string;
   keyword: string;
   description: string | null;
-  is_active: boolean;
+  created_at: string;
 }
 
 export const KeywordManager = () => {
   const [keywords, setKeywords] = useState<Keyword[]>([]);
   const [newKeyword, setNewKeyword] = useState("");
   const [newDescription, setNewDescription] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [adding, setAdding] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isAdding, setIsAdding] = useState(false);
   const { toast } = useToast();
 
-  useEffect(() => {
-    loadKeywords();
-  }, []);
-
   const loadKeywords = async () => {
-    setLoading(true);
+    setIsLoading(true);
     try {
       const { data, error } = await supabase
         .from('search_keywords')
@@ -46,21 +42,25 @@ export const KeywordManager = () => {
         variant: "destructive",
       });
     } finally {
-      setLoading(false);
+      setIsLoading(false);
     }
   };
+
+  useEffect(() => {
+    loadKeywords();
+  }, []);
 
   const handleAddKeyword = async () => {
     if (!newKeyword.trim()) {
       toast({
-        title: "Missing keyword",
+        title: "Keyword required",
         description: "Please enter a keyword",
         variant: "destructive",
       });
       return;
     }
 
-    setAdding(true);
+    setIsAdding(true);
     try {
       const { error } = await supabase
         .from('search_keywords')
@@ -69,18 +69,7 @@ export const KeywordManager = () => {
           description: newDescription.trim() || null,
         });
 
-      if (error) {
-        if (error.code === '23505') {
-          toast({
-            title: "Keyword already exists",
-            description: "This keyword is already in the database",
-            variant: "destructive",
-          });
-        } else {
-          throw error;
-        }
-        return;
-      }
+      if (error) throw error;
 
       toast({
         title: "Keyword added",
@@ -89,7 +78,7 @@ export const KeywordManager = () => {
 
       setNewKeyword("");
       setNewDescription("");
-      loadKeywords();
+      await loadKeywords();
     } catch (error) {
       console.error('Error adding keyword:', error);
       toast({
@@ -98,11 +87,11 @@ export const KeywordManager = () => {
         variant: "destructive",
       });
     } finally {
-      setAdding(false);
+      setIsAdding(false);
     }
   };
 
-  const handleRemoveKeyword = async (id: string, keyword: string) => {
+  const handleDeleteKeyword = async (id: string, keyword: string) => {
     try {
       const { error } = await supabase
         .from('search_keywords')
@@ -113,12 +102,12 @@ export const KeywordManager = () => {
 
       toast({
         title: "Keyword removed",
-        description: `"${keyword}" has been deactivated`,
+        description: `"${keyword}" has been removed`,
       });
 
-      loadKeywords();
+      await loadKeywords();
     } catch (error) {
-      console.error('Error removing keyword:', error);
+      console.error('Error deleting keyword:', error);
       toast({
         title: "Failed to remove keyword",
         description: error instanceof Error ? error.message : "Unknown error",
@@ -130,91 +119,95 @@ export const KeywordManager = () => {
   return (
     <Card className="p-6 bg-gradient-card border-border">
       <div className="space-y-4">
-        <div className="flex items-center gap-2">
-          <Tag className="h-5 w-5 text-primary" />
-          <h3 className="text-lg font-semibold text-foreground">Manage Keywords</h3>
+        <div>
+          <h3 className="text-lg font-semibold text-foreground mb-2">Manage Search Keywords</h3>
+          <p className="text-sm text-muted-foreground">
+            Add custom keywords to enhance search functionality
+          </p>
         </div>
 
-        <div className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="keyword">New Keyword</Label>
+        <div className="space-y-3">
+          <div>
+            <Label htmlFor="keyword">Keyword</Label>
             <Input
               id="keyword"
-              type="text"
-              placeholder="e.g., UH Manoa, budget allocation"
               value={newKeyword}
               onChange={(e) => setNewKeyword(e.target.value)}
-              disabled={adding}
-              onKeyDown={(e) => e.key === 'Enter' && handleAddKeyword()}
+              placeholder="e.g., UH Manoa, Budget, Research"
+              disabled={isAdding}
             />
           </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="description">Description (Optional)</Label>
+          <div>
+            <Label htmlFor="keyword-description">Description (Optional)</Label>
             <Input
-              id="description"
-              type="text"
-              placeholder="Brief description of what to search for"
+              id="keyword-description"
               value={newDescription}
               onChange={(e) => setNewDescription(e.target.value)}
-              disabled={adding}
+              placeholder="Brief description of the keyword"
+              disabled={isAdding}
             />
           </div>
 
           <Button
             onClick={handleAddKeyword}
-            disabled={!newKeyword.trim() || adding}
+            disabled={!newKeyword.trim() || isAdding}
             className="w-full"
           >
-            {adding ? (
+            {isAdding ? (
               <>
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 Adding...
               </>
             ) : (
               <>
-                <Plus className="h-4 w-4 mr-2" />
+                <Plus className="mr-2 h-4 w-4" />
                 Add Keyword
               </>
             )}
           </Button>
         </div>
 
-        <div className="space-y-2">
-          <Label>Active Keywords ({keywords.length})</Label>
-          {loading ? (
+        <div className="pt-4 border-t border-border">
+          <h4 className="text-sm font-semibold text-foreground mb-3">Active Keywords</h4>
+          {isLoading ? (
             <div className="flex items-center justify-center py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-primary" />
+              <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
             </div>
           ) : keywords.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-4 text-center">
-              No keywords yet. Add your first keyword above!
+            <p className="text-sm text-muted-foreground text-center py-8">
+              No keywords added yet
             </p>
           ) : (
-            <div className="flex flex-wrap gap-2">
+            <div className="space-y-2">
               {keywords.map((kw) => (
-                <Badge
+                <div
                   key={kw.id}
-                  variant="secondary"
-                  className="flex items-center gap-1 px-3 py-1.5"
+                  className="flex items-center justify-between p-3 rounded-lg bg-muted/50 border border-border"
                 >
-                  <span>{kw.keyword}</span>
-                  <button
-                    onClick={() => handleRemoveKeyword(kw.id, kw.keyword)}
-                    className="ml-1 hover:text-destructive transition-colors"
-                    aria-label={`Remove ${kw.keyword}`}
+                  <div className="flex-1">
+                    <Badge variant="secondary" className="mb-1">
+                      {kw.keyword}
+                    </Badge>
+                    {kw.description && (
+                      <p className="text-xs text-muted-foreground mt-1">
+                        {kw.description}
+                      </p>
+                    )}
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => handleDeleteKeyword(kw.id, kw.keyword)}
+                    className="hover:bg-destructive/10 hover:text-destructive"
                   >
-                    <X className="h-3 w-3" />
-                  </button>
-                </Badge>
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
               ))}
             </div>
           )}
         </div>
-
-        <p className="text-xs text-muted-foreground">
-          Keywords help organize and filter search results. They're also useful for tracking specific topics in legislative sessions.
-        </p>
       </div>
     </Card>
   );
