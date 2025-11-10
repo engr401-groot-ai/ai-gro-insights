@@ -84,12 +84,6 @@ export const SearchResults = ({ results, query }: SearchResultsProps) => {
               <p className="text-foreground leading-relaxed bg-muted/50 p-4 rounded-lg border border-border">
                 {result.excerpt}
               </p>
-              
-              <div className="flex items-center justify-between">
-                <Badge variant="outline" className="bg-accent/20 text-accent border-accent/30">
-                  Relevance: {result.relevanceScore}%
-                </Badge>
-              </div>
             </div>
           </Card>
         ))}
