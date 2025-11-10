@@ -196,6 +196,7 @@ export type Database = {
       transcriptions: {
         Row: {
           created_at: string | null
+          embedding: string | null
           full_text: string
           id: string
           language: string | null
@@ -203,6 +204,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string | null
+          embedding?: string | null
           full_text: string
           id?: string
           language?: string | null
@@ -210,6 +212,7 @@ export type Database = {
         }
         Update: {
           created_at?: string | null
+          embedding?: string | null
           full_text?: string
           id?: string
           language?: string | null
@@ -353,6 +356,26 @@ export type Database = {
           id: string
           published_at: string
           segment_text: string
+          similarity: number
+          start_time: number
+          video_id: string
+          video_title: string
+          video_url: string
+        }[]
+      }
+      search_transcripts_and_segments: {
+        Args: {
+          match_count?: number
+          match_threshold?: number
+          query_embedding: string
+        }
+        Returns: {
+          channel_name: string
+          content_text: string
+          end_time: number
+          id: string
+          is_full_transcript: boolean
+          published_at: string
           similarity: number
           start_time: number
           video_id: string
