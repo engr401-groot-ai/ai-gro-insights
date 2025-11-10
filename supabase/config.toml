@@ -1,1 +1,16 @@
 project_id = "adzcrombzkphrqavcnbn"
+
+[functions.fetch-youtube-videos]
+verify_jwt = false
+
+[functions.transcribe-video]
+verify_jwt = false
+
+[functions.generate-embeddings]
+verify_jwt = false
+
+[functions.semantic-search]
+verify_jwt = false
+
+[functions.rag-chat]
+verify_jwt = false
