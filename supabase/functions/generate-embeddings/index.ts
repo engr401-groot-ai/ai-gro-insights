@@ -69,27 +69,37 @@ serve(async (req) => {
 
       if (!embeddingResponse.ok) {
         const errorText = await embeddingResponse.text();
-        console.error('OpenAI API error:', errorText);
-        throw new Error(`OpenAI API error: ${errorText}`);
+        console.error('OpenAI API error:', embeddingResponse.status, errorText);
+        throw new Error(`OpenAI API error (${embeddingResponse.status}): ${errorText}`);
       }
 
       const embeddingData = await embeddingResponse.json();
+      console.log(`Received ${embeddingData.data?.length || 0} embeddings from OpenAI`);
 
       // Update each segment with its embedding
       for (let j = 0; j < batch.length; j++) {
         const segment = batch[j];
         const embedding = embeddingData.data[j].embedding;
 
-        const { error: updateError } = await supabase
+        console.log(`Updating segment ${segment.id} with embedding (${embedding.length} dimensions)`);
+
+        const { data: updateData, error: updateError } = await supabase
           .from('transcript_segments')
           .update({ embedding })
-          .eq('id', segment.id);
+          .eq('id', segment.id)
+          .select();
 
         if (updateError) {
           console.error(`Error updating segment ${segment.id}:`, updateError);
-          continue;
+          throw updateError;
         }
 
+        if (!updateData || updateData.length === 0) {
+          console.error(`No rows updated for segment ${segment.id}`);
+          throw new Error(`Failed to update segment ${segment.id}`);
+        }
+
+        console.log(`Successfully updated segment ${segment.id}`);
         processedCount++;
       }
 
