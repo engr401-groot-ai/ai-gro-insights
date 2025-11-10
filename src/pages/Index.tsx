@@ -4,6 +4,7 @@ import { StatsCard } from "@/components/StatsCard";
 import { VideoCard } from "@/components/VideoCard";
 import { SearchResults } from "@/components/SearchResults";
 import { ChatInterface } from "@/components/ChatInterface";
+import { AdminPanel } from "@/components/AdminPanel";
 import { Database, Clock, FileText, Youtube, MessageSquare } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useSemanticSearch } from "@/hooks/useSemanticSearch";
@@ -118,6 +119,9 @@ const Index = () => {
 
       {/* Main Content */}
       <main className="container mx-auto px-4 py-8 space-y-8">
+        {/* Admin Panel */}
+        <AdminPanel />
+
         {/* Stats Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <StatsCard
