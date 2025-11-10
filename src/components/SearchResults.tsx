@@ -71,12 +71,13 @@ export const SearchResults = ({ results, query }: SearchResultsProps) => {
                 <Button
                   variant="ghost"
                   size="sm"
-                  asChild
                   className="hover:bg-primary/10 hover:text-primary"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    window.open(result.url, '_blank', 'noopener,noreferrer');
+                  }}
                 >
-                  <a href={result.url} target="_blank" rel="noopener noreferrer">
-                    <ExternalLink className="h-4 w-4" />
-                  </a>
+                  <ExternalLink className="h-4 w-4" />
                 </Button>
               </div>
               

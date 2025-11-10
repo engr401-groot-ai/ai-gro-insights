@@ -63,12 +63,13 @@ export const VideoCard = ({
         <Button
           variant="ghost"
           size="sm"
-          asChild
           className="hover:bg-primary/10 hover:text-primary"
+          onClick={(e) => {
+            e.preventDefault();
+            window.open(url, '_blank', 'noopener,noreferrer');
+          }}
         >
-          <a href={url} target="_blank" rel="noopener noreferrer">
-            <ExternalLink className="h-4 w-4" />
-          </a>
+          <ExternalLink className="h-4 w-4" />
         </Button>
       </div>
     </Card>
