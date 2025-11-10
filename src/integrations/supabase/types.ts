@@ -14,13 +14,273 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      chat_conversations: {
+        Row: {
+          created_at: string | null
+          id: string
+          updated_at: string | null
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          updated_at?: string | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
+      chat_messages: {
+        Row: {
+          content: string
+          conversation_id: string | null
+          created_at: string | null
+          id: string
+          role: string
+          sources: Json | null
+        }
+        Insert: {
+          content: string
+          conversation_id?: string | null
+          created_at?: string | null
+          id?: string
+          role: string
+          sources?: Json | null
+        }
+        Update: {
+          content?: string
+          conversation_id?: string | null
+          created_at?: string | null
+          id?: string
+          role?: string
+          sources?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_messages_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "chat_conversations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      search_queries: {
+        Row: {
+          created_at: string | null
+          id: string
+          query_text: string
+          query_type: string | null
+          results_count: number | null
+        }
+        Insert: {
+          created_at?: string | null
+          id?: string
+          query_text: string
+          query_type?: string | null
+          results_count?: number | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          query_text?: string
+          query_type?: string | null
+          results_count?: number | null
+        }
+        Relationships: []
+      }
+      transcript_segments: {
+        Row: {
+          created_at: string | null
+          embedding: string | null
+          end_time: number
+          id: string
+          segment_text: string
+          start_time: number
+          transcription_id: string | null
+          video_id: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          embedding?: string | null
+          end_time: number
+          id?: string
+          segment_text: string
+          start_time: number
+          transcription_id?: string | null
+          video_id?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          embedding?: string | null
+          end_time?: number
+          id?: string
+          segment_text?: string
+          start_time?: number
+          transcription_id?: string | null
+          video_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "transcript_segments_transcription_id_fkey"
+            columns: ["transcription_id"]
+            isOneToOne: false
+            referencedRelation: "transcriptions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "transcript_segments_video_id_fkey"
+            columns: ["video_id"]
+            isOneToOne: false
+            referencedRelation: "videos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      transcriptions: {
+        Row: {
+          created_at: string | null
+          full_text: string
+          id: string
+          language: string | null
+          video_id: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          full_text: string
+          id?: string
+          language?: string | null
+          video_id?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          full_text?: string
+          id?: string
+          language?: string | null
+          video_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "transcriptions_video_id_fkey"
+            columns: ["video_id"]
+            isOneToOne: false
+            referencedRelation: "videos"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      videos: {
+        Row: {
+          channel_id: string | null
+          created_at: string | null
+          description: string | null
+          duration: number | null
+          id: string
+          published_at: string
+          status: string | null
+          thumbnail_url: string | null
+          title: string
+          updated_at: string | null
+          url: string
+          youtube_id: string
+        }
+        Insert: {
+          channel_id?: string | null
+          created_at?: string | null
+          description?: string | null
+          duration?: number | null
+          id?: string
+          published_at: string
+          status?: string | null
+          thumbnail_url?: string | null
+          title: string
+          updated_at?: string | null
+          url: string
+          youtube_id: string
+        }
+        Update: {
+          channel_id?: string | null
+          created_at?: string | null
+          description?: string | null
+          duration?: number | null
+          id?: string
+          published_at?: string
+          status?: string | null
+          thumbnail_url?: string | null
+          title?: string
+          updated_at?: string | null
+          url?: string
+          youtube_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "videos_channel_id_fkey"
+            columns: ["channel_id"]
+            isOneToOne: false
+            referencedRelation: "youtube_channels"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      youtube_channels: {
+        Row: {
+          channel_id: string
+          channel_name: string
+          channel_url: string
+          created_at: string | null
+          id: string
+          last_sync_at: string | null
+          updated_at: string | null
+        }
+        Insert: {
+          channel_id: string
+          channel_name: string
+          channel_url: string
+          created_at?: string | null
+          id?: string
+          last_sync_at?: string | null
+          updated_at?: string | null
+        }
+        Update: {
+          channel_id?: string
+          channel_name?: string
+          channel_url?: string
+          created_at?: string | null
+          id?: string
+          last_sync_at?: string | null
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      search_transcript_segments: {
+        Args: {
+          match_count?: number
+          match_threshold?: number
+          query_embedding: string
+        }
+        Returns: {
+          channel_name: string
+          end_time: number
+          id: string
+          published_at: string
+          segment_text: string
+          similarity: number
+          start_time: number
+          video_id: string
+          video_title: string
+          video_url: string
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never
