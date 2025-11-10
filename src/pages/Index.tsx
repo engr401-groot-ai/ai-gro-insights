@@ -1,17 +1,22 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { SearchBar } from "@/components/SearchBar";
 import { StatsCard } from "@/components/StatsCard";
 import { VideoCard } from "@/components/VideoCard";
 import { SearchResults } from "@/components/SearchResults";
 import { ChatInterface } from "@/components/ChatInterface";
 import { AdminPanel } from "@/components/AdminPanel";
-import { Database, Clock, FileText, Youtube, MessageSquare } from "lucide-react";
+import { Database, Clock, FileText, Youtube, MessageSquare, LogOut } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useSemanticSearch } from "@/hooks/useSemanticSearch";
+import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Button } from "@/components/ui/button";
 
 const Index = () => {
+  const navigate = useNavigate();
+  const { user, loading: authLoading, isAdmin, signOut } = useAuth();
   const [searchQuery, setSearchQuery] = useState("");
   const [hasSearched, setHasSearched] = useState(false);
   const [stats, setStats] = useState({
@@ -23,11 +28,20 @@ const Index = () => {
   const { toast } = useToast();
   const { results: searchResults, isSearching, search } = useSemanticSearch();
 
+  // Redirect to auth if not logged in
+  useEffect(() => {
+    if (!authLoading && !user) {
+      navigate("/auth");
+    }
+  }, [user, authLoading, navigate]);
+
   // Load stats and recent videos on mount
   useEffect(() => {
-    loadStats();
-    loadRecentVideos();
-  }, []);
+    if (user) {
+      loadStats();
+      loadRecentVideos();
+    }
+  }, [user]);
 
   const loadStats = async () => {
     try {
@@ -97,6 +111,24 @@ const Index = () => {
     });
   };
 
+  const handleSignOut = async () => {
+    await signOut();
+    navigate("/auth");
+  };
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+          <p className="mt-4 text-muted-foreground">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) return null;
+
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
@@ -114,14 +146,18 @@ const Index = () => {
                 RAG-powered search for UH-related content
               </p>
             </div>
+            <Button variant="outline" size="sm" onClick={handleSignOut}>
+              <LogOut className="h-4 w-4 mr-2" />
+              Sign Out
+            </Button>
           </div>
         </div>
       </header>
 
       {/* Main Content */}
       <main className="container mx-auto px-4 py-8 space-y-8">
-        {/* Admin Panel */}
-        <AdminPanel />
+        {/* Admin Panel - Only show to admins */}
+        {isAdmin && <AdminPanel />}
 
         {/* Stats Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

@@ -2,8 +2,10 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ExternalLink, Calendar, Video } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { TranscriptDownload } from "./TranscriptDownload";
 
 interface VideoCardProps {
+  id: string;
   title: string;
   channel: string;
   date: string;
@@ -13,6 +15,7 @@ interface VideoCardProps {
 }
 
 export const VideoCard = ({ 
+  id,
   title, 
   channel, 
   date, 
@@ -60,17 +63,22 @@ export const VideoCard = ({
           </div>
         </div>
         
-        <Button
-          variant="ghost"
-          size="sm"
-          className="hover:bg-primary/10 hover:text-primary"
-          onClick={(e) => {
-            e.preventDefault();
-            window.open(url, '_blank', 'noopener,noreferrer');
-          }}
-        >
-          <ExternalLink className="h-4 w-4" />
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="hover:bg-primary/10 hover:text-primary"
+            onClick={(e) => {
+              e.preventDefault();
+              window.open(url, '_blank', 'noopener,noreferrer');
+            }}
+          >
+            <ExternalLink className="h-4 w-4" />
+          </Button>
+          {status === 'processed' && (
+            <TranscriptDownload videoId={id} videoTitle={title} />
+          )}
+        </div>
       </div>
     </Card>
   );

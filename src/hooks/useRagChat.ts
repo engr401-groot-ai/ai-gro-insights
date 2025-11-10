@@ -28,8 +28,14 @@ export const useRagChat = () => {
     setIsLoading(true);
 
     try {
+      // Get the session token
+      const { data: { session } } = await supabase.auth.getSession();
+      
       const { data, error } = await supabase.functions.invoke('rag-chat', {
-        body: { message, conversationId }
+        body: { message, conversationId },
+        headers: {
+          Authorization: `Bearer ${session?.access_token}`
+        }
       });
 
       if (error) throw error;

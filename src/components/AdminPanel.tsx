@@ -26,7 +26,10 @@ export const AdminPanel = () => {
         description: 'Running full automated pipeline. This may take a few minutes...',
       });
 
-      const { data, error } = await supabase.functions.invoke('pipeline-orchestrator');
+      const { data: { session } } = await supabase.auth.getSession();
+      const { data, error } = await supabase.functions.invoke('pipeline-orchestrator', {
+        headers: { Authorization: `Bearer ${session?.access_token}` }
+      });
       
       if (error) throw error;
       
@@ -67,7 +70,10 @@ export const AdminPanel = () => {
   const fetchVideos = async () => {
     setIsFetching(true);
     try {
-      const { data, error } = await supabase.functions.invoke('fetch-youtube-videos');
+      const { data: { session } } = await supabase.auth.getSession();
+      const { data, error } = await supabase.functions.invoke('fetch-youtube-videos', {
+        headers: { Authorization: `Bearer ${session?.access_token}` }
+      });
       
       if (error) throw error;
       
@@ -90,6 +96,7 @@ export const AdminPanel = () => {
   const transcribeVideos = async () => {
     setIsTranscribing(true);
     try {
+      const { data: { session } } = await supabase.auth.getSession();
       // Get all pending videos
       const { data: videos, error: videosError } = await supabase
         .from('videos')
@@ -111,7 +118,8 @@ export const AdminPanel = () => {
       // Transcribe each video
       for (const video of videos) {
         await supabase.functions.invoke('transcribe-video', {
-          body: { videoId: video.id }
+          body: { videoId: video.id },
+          headers: { Authorization: `Bearer ${session?.access_token}` }
         });
       }
 
@@ -134,6 +142,7 @@ export const AdminPanel = () => {
   const generateEmbeddings = async () => {
     setIsGeneratingEmbeddings(true);
     try {
+      const { data: { session } } = await supabase.auth.getSession();
       // Get all transcribed videos
       const { data: videos, error: videosError } = await supabase
         .from('videos')
@@ -155,7 +164,8 @@ export const AdminPanel = () => {
       // Generate embeddings for each video
       for (const video of videos) {
         await supabase.functions.invoke('generate-embeddings', {
-          body: { videoId: video.id }
+          body: { videoId: video.id },
+          headers: { Authorization: `Bearer ${session?.access_token}` }
         });
       }
 
@@ -183,7 +193,10 @@ export const AdminPanel = () => {
         description: 'Generating embeddings for all videos. This may take several minutes...',
       });
 
-      const { data, error } = await supabase.functions.invoke('batch-generate-embeddings');
+      const { data: { session } } = await supabase.auth.getSession();
+      const { data, error } = await supabase.functions.invoke('batch-generate-embeddings', {
+        headers: { Authorization: `Bearer ${session?.access_token}` }
+      });
       
       if (error) throw error;
       

@@ -13,17 +13,37 @@ serve(async (req) => {
   }
 
   try {
-    const { message, conversationId } = await req.json();
-    
-    if (!message) {
-      throw new Error('Message is required');
+    // Verify authentication
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader) {
+      return new Response(
+        JSON.stringify({ error: 'Authentication required' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const openaiApiKey = Deno.env.get('OPENAI_API_KEY')!;
     
-    const supabase = createClient(supabaseUrl, supabaseKey);
+    const supabase = createClient(supabaseUrl, supabaseKey, {
+      global: { headers: { Authorization: authHeader } }
+    });
+
+    // Verify the user is authenticated
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    if (authError || !user) {
+      return new Response(
+        JSON.stringify({ error: 'Invalid authentication' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const { message, conversationId } = await req.json();
+    
+    if (!message) {
+      throw new Error('Message is required');
+    }
 
     console.log(`Processing RAG chat message: "${message}"`);
 
@@ -32,7 +52,7 @@ serve(async (req) => {
     if (!currentConversationId) {
       const { data: newConversation, error: conversationError } = await supabase
         .from('chat_conversations')
-        .insert({ user_id: 'anonymous' })
+        .insert({ user_id: user.id })
         .select()
         .single();
 
@@ -67,12 +87,12 @@ serve(async (req) => {
     const embeddingData = await embeddingResponse.json();
     const queryEmbedding = embeddingData.data[0].embedding;
 
-    // Search for relevant segments
+    // Search for relevant segments with lower threshold
     const { data: relevantSegments, error: searchError } = await supabase
       .rpc('search_transcript_segments', {
         query_embedding: queryEmbedding,
-        match_threshold: 0.7,
-        match_count: 5
+        match_threshold: 0.5,
+        match_count: 10
       });
 
     if (searchError) {
