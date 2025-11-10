@@ -10,7 +10,9 @@ export interface SearchResult {
   relevanceScore: number;
   timestamp: string;
   publishedAt: string;
-  date: string; // Added for compatibility
+  date: string;
+  videoId: string;
+  isFullTranscript?: boolean;
 }
 
 export const useSemanticSearch = () => {
@@ -31,14 +33,16 @@ export const useSemanticSearch = () => {
       // Transform the results to match our interface
       const transformedResults: SearchResult[] = data.results.map((result: any) => ({
         id: result.id,
+        videoId: result.video_id,
         videoTitle: result.video_title,
         channel: result.channel_name,
         url: result.video_url,
-        excerpt: result.segment_text,
+        excerpt: result.segment_text || result.content_text,
         relevanceScore: Math.round(result.similarity * 100),
-        timestamp: formatTimestamp(result.start_time),
+        timestamp: result.is_full_transcript ? 'Full Transcript' : formatTimestamp(result.start_time),
         publishedAt: new Date(result.published_at).toLocaleDateString(),
-        date: new Date(result.published_at).toLocaleDateString()
+        date: new Date(result.published_at).toLocaleDateString(),
+        isFullTranscript: result.is_full_transcript || false
       }));
 
       setResults(transformedResults);

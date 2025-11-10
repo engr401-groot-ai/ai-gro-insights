@@ -124,9 +124,9 @@ serve(async (req) => {
       const embeddingData = await embeddingResponse.json();
       const queryEmbedding = embeddingData.data[0].embedding;
 
-      // Search for similar segments using the database function
+      // Search both segments and full transcripts using the new database function
       const { data: semanticResults, error: searchError } = await supabase
-        .rpc('search_transcript_segments', {
+        .rpc('search_transcripts_and_segments', {
           query_embedding: queryEmbedding,
           match_threshold: matchThreshold,
           match_count: matchCount
@@ -137,7 +137,20 @@ serve(async (req) => {
         throw searchError;
       }
       
-      results = semanticResults;
+      // Transform results to match expected format
+      results = semanticResults?.map((r: any) => ({
+        id: r.id,
+        video_id: r.video_id,
+        segment_text: r.content_text,
+        start_time: r.start_time,
+        end_time: r.end_time,
+        similarity: r.similarity,
+        video_title: r.video_title,
+        video_url: r.video_url,
+        channel_name: r.channel_name,
+        published_at: r.published_at,
+        is_full_transcript: r.is_full_transcript
+      })) || [];
     }
 
     // Log the search query

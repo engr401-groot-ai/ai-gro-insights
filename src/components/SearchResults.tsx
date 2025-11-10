@@ -2,9 +2,12 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ExternalLink, FileText } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useState } from "react";
+import { TranscriptViewer } from "./TranscriptViewer";
 
 interface SearchResult {
   id: string;
+  videoId: string;
   videoTitle: string;
   channel: string;
   date: string;
@@ -12,6 +15,7 @@ interface SearchResult {
   excerpt: string;
   relevanceScore: number;
   timestamp?: string;
+  isFullTranscript?: boolean;
 }
 
 interface SearchResultsProps {
@@ -20,6 +24,18 @@ interface SearchResultsProps {
 }
 
 export const SearchResults = ({ results, query }: SearchResultsProps) => {
+  const [selectedVideoId, setSelectedVideoId] = useState<string | null>(null);
+  const [selectedVideoTitle, setSelectedVideoTitle] = useState<string>("");
+  const [selectedVideoUrl, setSelectedVideoUrl] = useState<string>("");
+  const [transcriptOpen, setTranscriptOpen] = useState(false);
+
+  const openTranscript = (videoId: string, title: string, url: string) => {
+    setSelectedVideoId(videoId);
+    setSelectedVideoTitle(title);
+    setSelectedVideoUrl(url);
+    setTranscriptOpen(true);
+  };
+
   if (results.length === 0) {
     return (
       <Card className="p-12 text-center bg-gradient-card border-border">
@@ -65,29 +81,63 @@ export const SearchResults = ({ results, query }: SearchResultsProps) => {
                         <span className="text-primary font-medium">{result.timestamp}</span>
                       </>
                     )}
+                    {result.isFullTranscript && (
+                      <>
+                        <span>•</span>
+                        <Badge variant="secondary" className="text-xs">
+                          Full Transcript
+                        </Badge>
+                      </>
+                    )}
                   </div>
                 </div>
                 
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="hover:bg-primary/10 hover:text-primary"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    window.open(result.url, '_blank', 'noopener,noreferrer');
-                  }}
-                >
-                  <ExternalLink className="h-4 w-4" />
-                </Button>
+                <div className="flex gap-2">
+                  {result.isFullTranscript && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="hover:bg-primary/10 hover:text-primary"
+                      onClick={() => openTranscript(result.videoId, result.videoTitle, result.url)}
+                    >
+                      <FileText className="h-4 w-4 mr-2" />
+                      View Full
+                    </Button>
+                  )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="hover:bg-primary/10 hover:text-primary"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      window.open(result.url, '_blank', 'noopener,noreferrer');
+                    }}
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                  </Button>
+                </div>
               </div>
               
               <p className="text-foreground leading-relaxed bg-muted/50 p-4 rounded-lg border border-border">
-                {result.excerpt}
+                {result.isFullTranscript 
+                  ? `${result.excerpt.substring(0, 300)}${result.excerpt.length > 300 ? '...' : ''}`
+                  : result.excerpt
+                }
               </p>
             </div>
           </Card>
         ))}
       </div>
+
+      {selectedVideoId && (
+        <TranscriptViewer
+          videoId={selectedVideoId}
+          videoTitle={selectedVideoTitle}
+          videoUrl={selectedVideoUrl}
+          open={transcriptOpen}
+          onOpenChange={setTranscriptOpen}
+        />
+      )}
     </div>
   );
 };

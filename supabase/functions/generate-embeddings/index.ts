@@ -69,27 +69,36 @@ serve(async (req) => {
       throw segmentsError;
     }
 
-    if (!segments || segments.length === 0) {
+    // Get the full transcription if it doesn't have an embedding
+    const { data: transcription, error: transcriptionError } = await supabase
+      .from('transcriptions')
+      .select('*')
+      .eq('video_id', videoId)
+      .is('embedding', null)
+      .single();
+
+    if (transcriptionError && transcriptionError.code !== 'PGRST116') {
+      throw transcriptionError;
+    }
+
+    if ((!segments || segments.length === 0) && !transcription) {
       return new Response(
         JSON.stringify({ 
           success: true, 
-          message: 'No segments need embeddings',
+          message: 'No content needs embeddings',
           processedCount: 0
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    console.log(`Processing ${segments.length} segments`);
+    console.log(`Processing ${segments?.length || 0} segments and ${transcription ? '1' : '0'} full transcript`);
     let processedCount = 0;
 
-    // Process in batches to avoid rate limits
-    const batchSize = 20;
-    for (let i = 0; i < segments.length; i += batchSize) {
-      const batch = segments.slice(i, i + batchSize);
-      const texts = batch.map(s => s.segment_text);
-
-      // Generate embeddings using OpenAI
+    // First, process the full transcript if needed
+    if (transcription) {
+      console.log('Generating embedding for full transcript');
+      
       const embeddingResponse = await fetch('https://api.openai.com/v1/embeddings', {
         method: 'POST',
         headers: {
@@ -98,51 +107,95 @@ serve(async (req) => {
         },
         body: JSON.stringify({
           model: 'text-embedding-3-small',
-          input: texts,
+          input: transcription.full_text,
         }),
       });
 
       if (!embeddingResponse.ok) {
         const errorText = await embeddingResponse.text();
-        console.error('OpenAI API error:', embeddingResponse.status, errorText);
+        console.error('OpenAI API error for transcript:', embeddingResponse.status, errorText);
         throw new Error(`OpenAI API error (${embeddingResponse.status}): ${errorText}`);
       }
 
       const embeddingData = await embeddingResponse.json();
-      console.log(`Received ${embeddingData.data?.length || 0} embeddings from OpenAI`);
+      const embedding = embeddingData.data[0].embedding;
 
-      // Update each segment with its embedding
-      for (let j = 0; j < batch.length; j++) {
-        const segment = batch[j];
-        const embedding = embeddingData.data[j].embedding;
+      const { error: updateError } = await supabase
+        .from('transcriptions')
+        .update({ embedding })
+        .eq('id', transcription.id);
 
-        console.log(`Updating segment ${segment.id} with embedding (${embedding.length} dimensions)`);
-
-        const { data: updateData, error: updateError } = await supabase
-          .from('transcript_segments')
-          .update({ embedding })
-          .eq('id', segment.id)
-          .select();
-
-        if (updateError) {
-          console.error(`Error updating segment ${segment.id}:`, updateError);
-          throw updateError;
-        }
-
-        if (!updateData || updateData.length === 0) {
-          console.error(`No rows updated for segment ${segment.id}`);
-          throw new Error(`Failed to update segment ${segment.id}`);
-        }
-
-        console.log(`Successfully updated segment ${segment.id}`);
-        processedCount++;
+      if (updateError) {
+        console.error('Error updating transcription:', updateError);
+        throw updateError;
       }
 
-      console.log(`Processed batch ${Math.floor(i / batchSize) + 1}, total: ${processedCount}`);
-      
-      // Small delay to avoid rate limits
-      if (i + batchSize < segments.length) {
-        await new Promise(resolve => setTimeout(resolve, 1000));
+      console.log('Successfully embedded full transcript');
+      processedCount++;
+    }
+
+    // Process segments in batches to avoid rate limits
+    const batchSize = 20;
+    if (segments && segments.length > 0) {
+      for (let i = 0; i < segments.length; i += batchSize) {
+        const batch = segments.slice(i, i + batchSize);
+        const texts = batch.map(s => s.segment_text);
+
+        // Generate embeddings using OpenAI
+        const embeddingResponse = await fetch('https://api.openai.com/v1/embeddings', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${openaiApiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'text-embedding-3-small',
+            input: texts,
+          }),
+        });
+
+        if (!embeddingResponse.ok) {
+          const errorText = await embeddingResponse.text();
+          console.error('OpenAI API error:', embeddingResponse.status, errorText);
+          throw new Error(`OpenAI API error (${embeddingResponse.status}): ${errorText}`);
+        }
+
+        const embeddingData = await embeddingResponse.json();
+        console.log(`Received ${embeddingData.data?.length || 0} embeddings from OpenAI`);
+
+        // Update each segment with its embedding
+        for (let j = 0; j < batch.length; j++) {
+          const segment = batch[j];
+          const embedding = embeddingData.data[j].embedding;
+
+          console.log(`Updating segment ${segment.id} with embedding (${embedding.length} dimensions)`);
+
+          const { data: updateData, error: updateError } = await supabase
+            .from('transcript_segments')
+            .update({ embedding })
+            .eq('id', segment.id)
+            .select();
+
+          if (updateError) {
+            console.error(`Error updating segment ${segment.id}:`, updateError);
+            throw updateError;
+          }
+
+          if (!updateData || updateData.length === 0) {
+            console.error(`No rows updated for segment ${segment.id}`);
+            throw new Error(`Failed to update segment ${segment.id}`);
+          }
+
+          console.log(`Successfully updated segment ${segment.id}`);
+          processedCount++;
+        }
+
+        console.log(`Processed batch ${Math.floor(i / batchSize) + 1}, total: ${processedCount}`);
+        
+        // Small delay to avoid rate limits
+        if (i + batchSize < segments.length) {
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
       }
     }
 
@@ -152,13 +205,14 @@ serve(async (req) => {
       .update({ status: 'completed' })
       .eq('id', videoId);
 
-    console.log(`Embeddings generation completed. Processed ${processedCount} segments`);
+    console.log(`Embeddings generation completed. Processed ${processedCount} items`);
 
     return new Response(
       JSON.stringify({ 
         success: true, 
         processedCount,
-        totalSegments: segments.length
+        totalSegments: segments?.length || 0,
+        fullTranscriptProcessed: !!transcription
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );

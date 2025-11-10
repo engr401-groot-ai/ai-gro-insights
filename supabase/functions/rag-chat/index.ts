@@ -98,9 +98,9 @@ serve(async (req) => {
     const embeddingData = await embeddingResponse.json();
     const queryEmbedding = embeddingData.data[0].embedding;
 
-    // Search for relevant segments with lower threshold
-    const { data: relevantSegments, error: searchError } = await supabase
-      .rpc('search_transcript_segments', {
+    // Search for relevant content (segments and full transcripts)
+    const { data: relevantContent, error: searchError } = await supabase
+      .rpc('search_transcripts_and_segments', {
         query_embedding: queryEmbedding,
         match_threshold: 0.5,
         match_count: 10
@@ -111,12 +111,16 @@ serve(async (req) => {
       throw searchError;
     }
 
-    console.log(`Found ${relevantSegments?.length || 0} relevant segments`);
+    console.log(`Found ${relevantContent?.length || 0} relevant items`);
 
-    // Build context from relevant segments
-    const context = relevantSegments?.map((seg: any) => 
-      `[Video: "${seg.video_title}" from ${seg.channel_name}, ${new Date(seg.published_at).toLocaleDateString()}]\n${seg.segment_text}\n(at ${formatTime(seg.start_time)})`
-    ).join('\n\n') || 'No relevant information found.';
+    // Build context from relevant content
+    const context = relevantContent?.map((item: any) => {
+      if (item.is_full_transcript) {
+        return `[Full Transcript - Video: "${item.video_title}" from ${item.channel_name}, ${new Date(item.published_at).toLocaleDateString()}]\n${item.content_text.substring(0, 1000)}${item.content_text.length > 1000 ? '...' : ''}`;
+      } else {
+        return `[Video: "${item.video_title}" from ${item.channel_name}, ${new Date(item.published_at).toLocaleDateString()}]\n${item.content_text}\n(at ${formatTime(item.start_time)})`;
+      }
+    }).join('\n\n') || 'No relevant information found.';
 
     // Get conversation history
     const { data: history } = await supabase
@@ -175,16 +179,17 @@ ${context}`
         conversation_id: currentConversationId,
         role: 'assistant',
         content: assistantMessage,
-        sources: relevantSegments?.map((seg: any) => ({
-          videoTitle: seg.video_title,
-          channel: seg.channel_name,
-          url: seg.video_url,
-          timestamp: seg.start_time,
-          publishedAt: seg.published_at,
-          similarity: seg.similarity,
-          segmentText: seg.segment_text,
-          startTime: seg.start_time,
-          endTime: seg.end_time
+        sources: relevantContent?.map((item: any) => ({
+          videoTitle: item.video_title,
+          channel: item.channel_name,
+          url: item.video_url,
+          timestamp: item.start_time,
+          publishedAt: item.published_at,
+          similarity: item.similarity,
+          segmentText: item.content_text,
+          startTime: item.start_time,
+          endTime: item.end_time,
+          isFullTranscript: item.is_full_transcript
         }))
       });
 
@@ -195,16 +200,17 @@ ${context}`
         success: true,
         conversationId: currentConversationId,
         response: assistantMessage,
-        sources: relevantSegments?.map((seg: any) => ({
-          videoTitle: seg.video_title,
-          channel: seg.channel_name,
-          url: seg.video_url,
-          timestamp: formatTime(seg.start_time),
-          publishedAt: seg.published_at,
-          similarity: Math.round(seg.similarity * 100),
-          segmentText: seg.segment_text,
-          startTime: seg.start_time,
-          endTime: seg.end_time
+        sources: relevantContent?.map((item: any) => ({
+          videoTitle: item.video_title,
+          channel: item.channel_name,
+          url: item.video_url,
+          timestamp: item.is_full_transcript ? 'Full Transcript' : formatTime(item.start_time),
+          publishedAt: item.published_at,
+          similarity: Math.round(item.similarity * 100),
+          segmentText: item.content_text,
+          startTime: item.start_time,
+          endTime: item.end_time,
+          isFullTranscript: item.is_full_transcript
         })) || []
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
