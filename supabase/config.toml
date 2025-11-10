@@ -13,7 +13,7 @@ verify_jwt = true
 verify_jwt = true
 
 [functions.semantic-search]
-verify_jwt = false
+verify_jwt = true
 
 [functions.rag-chat]
 verify_jwt = true

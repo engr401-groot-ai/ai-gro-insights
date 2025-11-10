@@ -44,6 +44,17 @@ serve(async (req) => {
     if (!message) {
       throw new Error('Message is required');
     }
+    
+    // Validate message length
+    if (message.length < 3 || message.length > 1000) {
+      return new Response(
+        JSON.stringify({ error: 'Message must be between 3 and 1000 characters' }),
+        { 
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        }
+      );
+    }
 
     console.log(`Processing RAG chat message: "${message}"`);
 

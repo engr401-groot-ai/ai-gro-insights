@@ -15,8 +15,41 @@ serve(async (req) => {
   try {
     const { query, matchThreshold = 0.7, matchCount = 10 } = await req.json();
     
+    // Validate query
     if (!query) {
       throw new Error('Query is required');
+    }
+    
+    if (typeof query !== 'string' || query.length < 2 || query.length > 500) {
+      return new Response(
+        JSON.stringify({ error: 'Query must be between 2 and 500 characters' }),
+        { 
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        }
+      );
+    }
+    
+    // Validate matchThreshold
+    if (typeof matchThreshold !== 'number' || matchThreshold < 0 || matchThreshold > 1) {
+      return new Response(
+        JSON.stringify({ error: 'matchThreshold must be between 0 and 1' }),
+        { 
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        }
+      );
+    }
+    
+    // Validate matchCount
+    if (typeof matchCount !== 'number' || matchCount < 1 || matchCount > 50) {
+      return new Response(
+        JSON.stringify({ error: 'matchCount must be between 1 and 50' }),
+        { 
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        }
+      );
     }
 
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;

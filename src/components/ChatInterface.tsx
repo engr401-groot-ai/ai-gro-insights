@@ -7,6 +7,7 @@ import { useRagChat } from '@/hooks/useRagChat';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collapsible';
 
 export const ChatInterface = () => {
+  const MAX_INPUT_LENGTH = 1000;
   const [input, setInput] = useState('');
   const [expandedSources, setExpandedSources] = useState<Record<string, boolean>>({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -27,9 +28,10 @@ export const ChatInterface = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!input.trim() || isLoading) return;
+    const trimmedInput = input.trim();
+    if (!trimmedInput || isLoading || trimmedInput.length > MAX_INPUT_LENGTH) return;
     
-    await sendMessage(input);
+    await sendMessage(trimmedInput);
     setInput('');
   };
 
@@ -160,28 +162,38 @@ export const ChatInterface = () => {
         <div ref={messagesEndRef} />
       </div>
 
-      <form onSubmit={handleSubmit} className="flex gap-2">
-        <Textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask about UH mentions in legislative sessions..."
-          className="flex-1 resize-none"
-          rows={2}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              handleSubmit(e);
-            }
-          }}
-        />
-        <Button 
-          type="submit" 
-          disabled={!input.trim() || isLoading}
-          size="icon"
-          className="self-end"
-        >
-          <Send className="h-4 w-4" />
-        </Button>
+      <form onSubmit={handleSubmit} className="space-y-2">
+        <div className="flex gap-2">
+          <div className="flex-1 space-y-1">
+            <Textarea
+              value={input}
+              onChange={(e) => setInput(e.target.value.slice(0, MAX_INPUT_LENGTH))}
+              placeholder="Ask about UH mentions in legislative sessions..."
+              className="resize-none"
+              rows={2}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSubmit(e);
+                }
+              }}
+            />
+            <div className="flex justify-between text-xs text-muted-foreground px-1">
+              <span>{input.length}/{MAX_INPUT_LENGTH} characters</span>
+              {input.length >= MAX_INPUT_LENGTH && (
+                <span className="text-destructive">Maximum length reached</span>
+              )}
+            </div>
+          </div>
+          <Button 
+            type="submit" 
+            disabled={!input.trim() || isLoading || input.length > MAX_INPUT_LENGTH}
+            size="icon"
+            className="self-start mt-0"
+          >
+            <Send className="h-4 w-4" />
+          </Button>
+        </div>
       </form>
     </Card>
   );
