@@ -108,65 +108,54 @@ serve(async (req) => {
       console.warn("yt-dlp not available:", error);
     }
 
-    // If yt-dlp is not available, use mock data for now
-    let transcriptionText = '';
-    
-    if (audioUrl && audioUrl.startsWith('http')) {
-      console.log("Downloading audio from YouTube...");
-      
-      // Download audio in chunks to avoid memory issues
-      // For very long videos, this might still timeout - consider splitting into segments
-      const audioResponse = await fetch(audioUrl);
-      
-      if (!audioResponse.ok || !audioResponse.body) {
-        throw new Error('Failed to download audio');
-      }
-
-      // Convert stream to blob (max ~25MB to avoid edge function limits)
-      const audioBlob = await audioResponse.blob();
-      const audioSize = audioBlob.size;
-      
-      console.log(`Audio downloaded: ${(audioSize / 1024 / 1024).toFixed(2)} MB`);
-
-      // If audio is too large, we might need to segment it
-      // For now, limit to 25MB (OpenAI Whisper limit is 25MB)
-      if (audioSize > 25 * 1024 * 1024) {
-        console.warn("Audio file too large for Whisper API, using mock transcription");
-        transcriptionText = generateMockTranscription(video.title);
-      } else {
-        // Send to OpenAI Whisper
-        console.log("Sending to OpenAI Whisper API...");
-        
-        const formData = new FormData();
-        formData.append('file', audioBlob, 'audio.m4a');
-        formData.append('model', 'whisper-1');
-        formData.append('language', 'en');
-        formData.append('response_format', 'verbose_json');
-
-        const whisperResponse = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${openaiApiKey}`,
-          },
-          body: formData,
-        });
-
-        if (!whisperResponse.ok) {
-          const errorText = await whisperResponse.text();
-          console.error('Whisper API error:', errorText);
-          throw new Error(`Whisper API error: ${errorText}`);
-        }
-
-        const whisperData = await whisperResponse.json();
-        transcriptionText = whisperData.text;
-        
-        console.log(`Transcription completed: ${transcriptionText.length} characters`);
-      }
-    } else {
-      // Fallback to mock data if audio download failed
-      console.log("Using mock transcription (audio download not available)");
-      transcriptionText = generateMockTranscription(video.title);
+    if (!audioUrl || !audioUrl.startsWith('http')) {
+      throw new Error('Failed to get audio URL from YouTube');
     }
+
+    console.log("Downloading audio from YouTube...");
+    
+    const audioResponse = await fetch(audioUrl);
+    
+    if (!audioResponse.ok || !audioResponse.body) {
+      throw new Error('Failed to download audio');
+    }
+
+    const audioBlob = await audioResponse.blob();
+    const audioSize = audioBlob.size;
+    
+    console.log(`Audio downloaded: ${(audioSize / 1024 / 1024).toFixed(2)} MB`);
+
+    if (audioSize > 25 * 1024 * 1024) {
+      throw new Error('Audio file too large for Whisper API (max 25MB)');
+    }
+
+    // Send to OpenAI Whisper
+    console.log("Sending to OpenAI Whisper API...");
+    
+    const formData = new FormData();
+    formData.append('file', audioBlob, 'audio.m4a');
+    formData.append('model', 'whisper-1');
+    formData.append('language', 'en');
+    formData.append('response_format', 'verbose_json');
+
+    const whisperResponse = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${openaiApiKey}`,
+      },
+      body: formData,
+    });
+
+    if (!whisperResponse.ok) {
+      const errorText = await whisperResponse.text();
+      console.error('Whisper API error:', errorText);
+      throw new Error(`Whisper API error: ${errorText}`);
+    }
+
+    const whisperData = await whisperResponse.json();
+    const transcriptionText = whisperData.text;
+    
+    console.log(`Transcription completed: ${transcriptionText.length} characters`);
 
     // Insert transcription
     const { data: transcription, error: transcriptionError } = await supabase
@@ -190,9 +179,7 @@ serve(async (req) => {
     
     for (let i = 0; i < segments.length; i++) {
       const segment = segments[i];
-      // Estimate timestamps based on segment position
-      // For real implementation with Whisper's verbose_json, use actual timestamps
-      const totalDuration = video.duration || 3600; // fallback to 1 hour
+      const totalDuration = video.duration || 3600;
       const startTime = Math.floor((i / segments.length) * totalDuration);
       const endTime = Math.floor(((i + 1) / segments.length) * totalDuration);
 
@@ -220,7 +207,6 @@ serve(async (req) => {
         success: true, 
         transcriptionId: transcription.id,
         segmentCount: segments.length,
-        usedRealAudio: audioUrl !== null,
         charactersTranscribed: transcriptionText.length
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -237,10 +223,6 @@ serve(async (req) => {
     );
   }
 });
-
-function generateMockTranscription(videoTitle: string): string {
-  return `This is a legislative session recording titled "${videoTitle}". The session includes discussions about various topics including the University of Hawaii system. Committee members discussed budget allocations for UH Manoa campus, research funding opportunities, student support programs, and infrastructure improvements. Representatives debated funding proposals for the upcoming fiscal year, emphasizing the importance of maintaining competitive faculty recruitment and retention programs. The discussion also covered the need for increased resources for graduate programs at UH Manoa and the broader UH system. Testimony was heard from university administrators regarding current challenges and future needs for the institution.`;
-}
 
 function splitIntoSegments(text: string): string[] {
   const sentences = text.match(/[^\.!\?]+[\.!\?]+/g) || [text];
