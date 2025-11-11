@@ -13,6 +13,7 @@ export const AdminPanel = () => {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const [isGeneratingEmbeddings, setIsGeneratingEmbeddings] = useState(false);
   const [isBatchGenerating, setIsBatchGenerating] = useState(false);
+  const [isProcessingAll, setIsProcessingAll] = useState(false);
   const { toast } = useToast();
 
   const runFullPipeline = async () => {
@@ -182,6 +183,64 @@ export const AdminPanel = () => {
       });
     } finally {
       setIsGeneratingEmbeddings(false);
+    }
+  };
+
+  const processAllPending = async () => {
+    setIsProcessingAll(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      // Get ALL pending videos (no limit)
+      const { data: videos, error: videosError } = await supabase
+        .from('videos')
+        .select('id, title')
+        .eq('status', 'pending');
+
+      if (videosError) throw videosError;
+
+      if (!videos || videos.length === 0) {
+        toast({
+          title: 'No Pending Videos',
+          description: 'All videos have been processed already.',
+        });
+        setIsProcessingAll(false);
+        return;
+      }
+
+      toast({
+        title: 'Processing Started',
+        description: `Starting transcription for ${videos.length} videos. This will run in the background - you can close this page.`,
+      });
+
+      // Trigger transcription for all videos (they run in background)
+      const promises = videos.map(video => 
+        supabase.functions.invoke('transcribe-video', {
+          body: { videoId: video.id },
+          headers: { Authorization: `Bearer ${session?.access_token}` }
+        })
+      );
+
+      await Promise.all(promises);
+
+      toast({
+        title: 'Processing Triggered! 🚀',
+        description: `${videos.length} videos are now processing in the background. Check back later for results.`,
+      });
+
+      // Reload after a short delay to show updated status
+      setTimeout(() => {
+        window.location.reload();
+      }, 2000);
+    } catch (error) {
+      console.error('Error processing pending videos:', error);
+      toast({
+        title: 'Processing Error',
+        description: 'Failed to start processing. Check console for details.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsProcessingAll(false);
     }
   };
 
@@ -358,11 +417,40 @@ export const AdminPanel = () => {
             </div>
           </div>
 
-          <div className="pt-4 border-t border-border">
+          <div className="pt-4 border-t border-border space-y-4">
             <div className="p-4 bg-primary/5 border border-primary/20 rounded-lg">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="font-semibold text-foreground">⚡ Batch Process All Videos</p>
+                  <p className="font-semibold text-foreground">🔥 Process All Pending Videos</p>
+                  <p className="text-sm text-muted-foreground">
+                    Transcribe ALL pending videos at once (runs in background)
+                  </p>
+                </div>
+                <Button
+                  onClick={processAllPending}
+                  disabled={isProcessingAll}
+                  variant="default"
+                  className="gap-2"
+                >
+                  {isProcessingAll ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Starting...
+                    </>
+                  ) : (
+                    <>
+                      <FileText className="h-4 w-4" />
+                      Process All Pending
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+
+            <div className="p-4 bg-primary/5 border border-primary/20 rounded-lg">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="font-semibold text-foreground">⚡ Batch Generate Embeddings</p>
                   <p className="text-sm text-muted-foreground">
                     Generate embeddings for ALL videos that are missing them
                   </p>
