@@ -113,8 +113,22 @@ serve(async (req) => {
 
     console.log(`Found ${relevantContent?.length || 0} relevant items`);
 
+    // Deduplicate results by video - keep only the most relevant result per video
+    const uniqueByVideo = new Map();
+    relevantContent?.forEach((item: any) => {
+      const existing = uniqueByVideo.get(item.video_id);
+      if (!existing || item.similarity > existing.similarity) {
+        uniqueByVideo.set(item.video_id, item);
+      }
+    });
+    const deduplicatedContent = Array.from(uniqueByVideo.values())
+      .sort((a, b) => b.similarity - a.similarity)
+      .slice(0, 5); // Limit to top 5 unique videos
+
+    console.log(`After deduplication: ${deduplicatedContent.length} unique videos`);
+
     // Build context from relevant content
-    const context = relevantContent?.map((item: any) => {
+    const context = deduplicatedContent?.map((item: any) => {
       if (item.is_full_transcript) {
         return `[Full Transcript - Video: "${item.video_title}" from ${item.channel_name}, ${new Date(item.published_at).toLocaleDateString()}]\n${item.content_text.substring(0, 1000)}${item.content_text.length > 1000 ? '...' : ''}`;
       } else {
@@ -179,7 +193,7 @@ ${context}`
         conversation_id: currentConversationId,
         role: 'assistant',
         content: assistantMessage,
-        sources: relevantContent?.map((item: any) => ({
+        sources: deduplicatedContent?.map((item: any) => ({
           videoTitle: item.video_title,
           channel: item.channel_name,
           url: item.video_url,
@@ -200,7 +214,7 @@ ${context}`
         success: true,
         conversationId: currentConversationId,
         response: assistantMessage,
-        sources: relevantContent?.map((item: any) => ({
+        sources: deduplicatedContent?.map((item: any) => ({
           videoTitle: item.video_title,
           channel: item.channel_name,
           url: item.video_url,
