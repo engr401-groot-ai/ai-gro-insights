@@ -418,6 +418,35 @@ export const AdminPanel = () => {
           </div>
 
           <div className="pt-4 border-t border-border space-y-4">
+            <div className="p-4 bg-accent/10 border border-accent rounded-lg">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="font-semibold text-foreground">⚡ Generate Missing Embeddings</p>
+                  <p className="text-sm text-muted-foreground">
+                    Generate embeddings for completed videos (needed for search!)
+                  </p>
+                </div>
+                <Button
+                  onClick={batchGenerateAllEmbeddings}
+                  disabled={isBatchGenerating}
+                  variant="default"
+                  className="gap-2"
+                >
+                  {isBatchGenerating ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Generating...
+                    </>
+                  ) : (
+                    <>
+                      <FileText className="h-4 w-4" />
+                      Generate Embeddings
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+
             <div className="p-4 bg-primary/5 border border-primary/20 rounded-lg">
               <div className="flex items-center justify-between">
                 <div>
