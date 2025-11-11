@@ -75,139 +75,164 @@ serve(async (req) => {
       .update({ status: 'processing' })
       .eq('id', videoId);
 
-    console.log(`Processing: ${video.title}`);
-    console.log(`YouTube URL: ${video.url}`);
-    console.log(`YouTube ID: ${video.youtube_id}`);
+    // Start background processing using waitUntil
+    const backgroundTask = async () => {
+      try {
+        console.log(`Processing: ${video.title}`);
+        console.log(`YouTube URL: ${video.url}`);
 
-    // Try to get audio download URL using youtube-dl-exec approach
-    // This extracts the direct audio stream URL from YouTube
-    let audioUrl: string | null = null;
-    
-    try {
-      // Use yt-dlp JSON format to get audio URL
-      const ytDlpCommand = new Deno.Command("yt-dlp", {
-        args: [
-          "-f", "bestaudio[ext=m4a]/bestaudio",
-          "-g", // Get direct URL
-          "--no-playlist",
-          video.url
-        ],
-        stdout: "piped",
-        stderr: "piped",
-      });
+        // Try to get audio download URL using yt-dlp
+        let audioUrl: string | null = null;
+        
+        try {
+          const ytDlpCommand = new Deno.Command("yt-dlp", {
+            args: [
+              "-f", "bestaudio[ext=m4a]/bestaudio",
+              "-g",
+              "--no-playlist",
+              video.url
+            ],
+            stdout: "piped",
+            stderr: "piped",
+          });
 
-      const { stdout, stderr, success } = await ytDlpCommand.output();
-      
-      if (success) {
-        audioUrl = new TextDecoder().decode(stdout).trim();
-        console.log("Got audio URL via yt-dlp");
-      } else {
-        console.warn("yt-dlp not available or failed:", new TextDecoder().decode(stderr));
-      }
-    } catch (error) {
-      console.warn("yt-dlp not available:", error);
-    }
+          const { stdout, stderr, success } = await ytDlpCommand.output();
+          
+          if (success) {
+            audioUrl = new TextDecoder().decode(stdout).trim();
+            console.log("Got audio URL via yt-dlp");
+          } else {
+            console.warn("yt-dlp failed:", new TextDecoder().decode(stderr));
+          }
+        } catch (error) {
+          console.warn("yt-dlp error:", error);
+        }
 
-    if (!audioUrl || !audioUrl.startsWith('http')) {
-      throw new Error('Failed to get audio URL from YouTube');
-    }
+        if (!audioUrl || !audioUrl.startsWith('http')) {
+          throw new Error('Failed to get audio URL from YouTube');
+        }
 
-    console.log("Downloading audio from YouTube...");
-    
-    const audioResponse = await fetch(audioUrl);
-    
-    if (!audioResponse.ok || !audioResponse.body) {
-      throw new Error('Failed to download audio');
-    }
+        console.log("Downloading audio from YouTube...");
+        
+        const audioResponse = await fetch(audioUrl);
+        
+        if (!audioResponse.ok || !audioResponse.body) {
+          throw new Error('Failed to download audio');
+        }
 
-    const audioBlob = await audioResponse.blob();
-    const audioSize = audioBlob.size;
-    
-    console.log(`Audio downloaded: ${(audioSize / 1024 / 1024).toFixed(2)} MB`);
+        const audioBlob = await audioResponse.blob();
+        const audioSize = audioBlob.size;
+        
+        console.log(`Audio downloaded: ${(audioSize / 1024 / 1024).toFixed(2)} MB`);
 
-    if (audioSize > 25 * 1024 * 1024) {
-      throw new Error('Audio file too large for Whisper API (max 25MB)');
-    }
+        if (audioSize > 25 * 1024 * 1024) {
+          throw new Error('Audio file too large for Whisper API (max 25MB)');
+        }
 
-    // Send to OpenAI Whisper
-    console.log("Sending to OpenAI Whisper API...");
-    
-    const formData = new FormData();
-    formData.append('file', audioBlob, 'audio.m4a');
-    formData.append('model', 'whisper-1');
-    formData.append('language', 'en');
-    formData.append('response_format', 'verbose_json');
+        // Send to OpenAI Whisper
+        console.log("Sending to OpenAI Whisper API...");
+        
+        const formData = new FormData();
+        formData.append('file', audioBlob, 'audio.m4a');
+        formData.append('model', 'whisper-1');
+        formData.append('language', 'en');
+        formData.append('response_format', 'verbose_json');
 
-    const whisperResponse = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${openaiApiKey}`,
-      },
-      body: formData,
-    });
-
-    if (!whisperResponse.ok) {
-      const errorText = await whisperResponse.text();
-      console.error('Whisper API error:', errorText);
-      throw new Error(`Whisper API error: ${errorText}`);
-    }
-
-    const whisperData = await whisperResponse.json();
-    const transcriptionText = whisperData.text;
-    
-    console.log(`Transcription completed: ${transcriptionText.length} characters`);
-
-    // Insert transcription
-    const { data: transcription, error: transcriptionError } = await supabase
-      .from('transcriptions')
-      .insert({
-        video_id: videoId,
-        full_text: transcriptionText,
-        language: 'en'
-      })
-      .select()
-      .single();
-
-    if (transcriptionError) {
-      throw transcriptionError;
-    }
-
-    // Split into segments (approximately every 500 characters or by sentence)
-    const segments = splitIntoSegments(transcriptionText);
-    
-    console.log(`Creating ${segments.length} transcript segments...`);
-    
-    for (let i = 0; i < segments.length; i++) {
-      const segment = segments[i];
-      const totalDuration = video.duration || 3600;
-      const startTime = Math.floor((i / segments.length) * totalDuration);
-      const endTime = Math.floor(((i + 1) / segments.length) * totalDuration);
-
-      await supabase
-        .from('transcript_segments')
-        .insert({
-          transcription_id: transcription.id,
-          video_id: videoId,
-          segment_text: segment,
-          start_time: startTime,
-          end_time: endTime
+        const whisperResponse = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${openaiApiKey}`,
+          },
+          body: formData,
         });
+
+        if (!whisperResponse.ok) {
+          const errorText = await whisperResponse.text();
+          console.error('Whisper API error:', errorText);
+          throw new Error(`Whisper API error: ${errorText}`);
+        }
+
+        const whisperData = await whisperResponse.json();
+        const transcriptionText = whisperData.text;
+        
+        console.log(`Transcription completed: ${transcriptionText.length} characters`);
+
+        // Insert transcription
+        const { data: transcription, error: transcriptionError } = await supabase
+          .from('transcriptions')
+          .insert({
+            video_id: videoId,
+            full_text: transcriptionText,
+            language: 'en'
+          })
+          .select()
+          .single();
+
+        if (transcriptionError) {
+          throw transcriptionError;
+        }
+
+        // Split into segments
+        const segments = splitIntoSegments(transcriptionText);
+        
+        console.log(`Creating ${segments.length} transcript segments...`);
+        
+        // Batch insert segments for better performance
+        const segmentsData = segments.map((segment, i) => {
+          const totalDuration = video.duration || 3600;
+          const startTime = Math.floor((i / segments.length) * totalDuration);
+          const endTime = Math.floor(((i + 1) / segments.length) * totalDuration);
+
+          return {
+            transcription_id: transcription.id,
+            video_id: videoId,
+            segment_text: segment,
+            start_time: startTime,
+            end_time: endTime
+          };
+        });
+
+        // Insert in batches of 50 to avoid overwhelming the database
+        for (let i = 0; i < segmentsData.length; i += 50) {
+          const batch = segmentsData.slice(i, i + 50);
+          await supabase.from('transcript_segments').insert(batch);
+          console.log(`Inserted segment batch ${Math.floor(i/50) + 1}/${Math.ceil(segmentsData.length/50)}`);
+        }
+
+        // Update video status to completed
+        await supabase
+          .from('videos')
+          .update({ status: 'completed' })
+          .eq('id', videoId);
+
+        console.log(`✓ Transcription completed for: ${video.title}`);
+      } catch (error) {
+        console.error('Background transcription error:', error);
+        // Update video status to failed
+        await supabase
+          .from('videos')
+          .update({ status: 'failed' })
+          .eq('id', videoId);
+      }
+    };
+
+    // Use waitUntil for background processing
+    // @ts-ignore - EdgeRuntime is available in Deno Deploy
+    if (typeof EdgeRuntime !== 'undefined') {
+      // @ts-ignore
+      EdgeRuntime.waitUntil(backgroundTask());
+    } else {
+      // Fallback for local development
+      backgroundTask();
     }
 
-    // Update video status
-    await supabase
-      .from('videos')
-      .update({ status: 'completed' })
-      .eq('id', videoId);
-
-    console.log(`✓ Transcription completed for: ${video.title}`);
-
+    // Return immediately
     return new Response(
       JSON.stringify({ 
         success: true, 
-        transcriptionId: transcription.id,
-        segmentCount: segments.length,
-        charactersTranscribed: transcriptionText.length
+        message: 'Transcription started',
+        videoId,
+        status: 'processing'
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
