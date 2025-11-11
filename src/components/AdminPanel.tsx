@@ -224,7 +224,7 @@ export const AdminPanel = () => {
       await Promise.all(promises);
 
       toast({
-        title: 'Processing Triggered! 🚀',
+        title: 'Processing Triggered',
         description: `${videos.length} videos are now processing in the background. Check back later for results.`,
       });
 
@@ -421,7 +421,7 @@ export const AdminPanel = () => {
             <div className="p-4 bg-accent/10 border border-accent rounded-lg">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="font-semibold text-foreground">⚡ Generate Missing Embeddings</p>
+                  <p className="font-semibold text-foreground">Generate Missing Embeddings</p>
                   <p className="text-sm text-muted-foreground">
                     Generate embeddings for completed videos (needed for search!)
                   </p>
@@ -479,7 +479,7 @@ export const AdminPanel = () => {
             <div className="p-4 bg-primary/5 border border-primary/20 rounded-lg">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="font-semibold text-foreground">⚡ Batch Generate Embeddings</p>
+                  <p className="font-semibold text-foreground">Batch Generate Embeddings</p>
                   <p className="text-sm text-muted-foreground">
                     Generate embeddings for ALL videos that are missing them
                   </p>
