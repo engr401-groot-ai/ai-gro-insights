@@ -55,40 +55,27 @@ serve(async (req) => {
 
     console.log('🚀 Starting batch embedding generation for all pending videos');
 
-    // Find all videos that have segments without embeddings
-    const { data: videosNeedingEmbeddings, error: queryError } = await supabase
-      .rpc('get_videos_needing_embeddings');
+    // Find all completed videos - we'll check both segments and transcriptions
+    const { data: videos, error } = await supabase
+      .from('videos')
+      .select(`
+        id,
+        title,
+        transcript_segments (id, embedding),
+        transcriptions (id, embedding)
+      `)
+      .eq('status', 'completed');
 
-    if (queryError) {
-      // Fallback to direct query if RPC doesn't exist
-      const { data: videos, error } = await supabase
-        .from('videos')
-        .select(`
-          id,
-          title,
-          transcript_segments!inner (
-            id,
-            embedding
-          )
-        `)
-        .eq('status', 'completed');
+    if (error) throw error;
 
-      if (error) throw error;
+    // Filter to videos that need embeddings (either segments OR transcriptions missing)
+    const videosNeedingEmbeddings = videos?.filter((v: any) => {
+      const segmentsMissing = v.transcript_segments?.some((s: any) => s.embedding === null) ?? false;
+      const transcriptionMissing = v.transcriptions?.some((t: any) => t.embedding === null) ?? false;
+      return segmentsMissing || transcriptionMissing;
+    }) ?? [];
 
-      // Filter to videos with null embeddings
-      const videoIds = new Set<string>();
-      videos?.forEach((v: any) => {
-        if (v.transcript_segments.some((s: any) => s.embedding === null)) {
-          videoIds.add(v.id);
-        }
-      });
-
-      const videoList = Array.from(videoIds).map(id => 
-        videos?.find((v: any) => v.id === id)
-      );
-
-      return await processVideos(supabase, videoList);
-    }
+    console.log(`Found ${videosNeedingEmbeddings.length} videos needing embeddings`);
 
     return await processVideos(supabase, videosNeedingEmbeddings);
 
