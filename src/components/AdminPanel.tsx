@@ -394,7 +394,7 @@ export const AdminPanel = () => {
               <CheckCircle2 className="h-4 w-4 mt-0.5 flex-shrink-0" />
               <p>
                 System automatically fetches, transcribes, and indexes videos every 6 hours (12am, 6am, 12pm, 6pm).
-                Transcription attempts to use real YouTube audio via yt-dlp + OpenAI Whisper. Falls back to mock data if yt-dlp is unavailable.
+                Transcription uses real YouTube audio via yt-dlp + OpenAI Whisper for accurate processing.
               </p>
             </div>
           </div>
