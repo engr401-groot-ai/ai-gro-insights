@@ -161,33 +161,7 @@ serve(async (req) => {
 
     const ytVideo = videoDetails.items[0];
     
-    // Check if live stream
-    if (ytVideo.snippet.liveBroadcastContent !== 'none') {
-      await fetch(
-        `${supabaseUrl}/rest/v1/videos?youtube_id=eq.${youtube_id}`,
-        {
-          method: 'PATCH',
-          headers: {
-            apikey: supabaseKey,
-            Authorization: `Bearer ${supabaseKey}`,
-            'Content-Type': 'application/json',
-            Prefer: 'return=minimal',
-          },
-          body: JSON.stringify({
-            status: 'failed',
-            error_reason: 'live_stream_no_vod',
-          }),
-        }
-      );
-      
-      console.log(`Video ${video.youtube_id} is a live stream without VOD`);
-      return new Response(
-        JSON.stringify({ error: 'Video is a live stream without VOD', code: 'live_stream_no_vod' }),
-        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    // Check if duration is available
+    // Check if duration is available (most important check)
     if (!ytVideo.contentDetails?.duration) {
       await fetch(
         `${supabaseUrl}/rest/v1/videos?youtube_id=eq.${youtube_id}`,
@@ -206,14 +180,43 @@ serve(async (req) => {
         }
       );
       
-      console.log(`Video ${video.youtube_id} has no duration (still processing)`);
+      console.log(`Video ${video.youtube_id} has no duration (still processing or live)`);
       return new Response(
-        JSON.stringify({ error: 'Video still processing on YouTube', code: 'no_duration' }),
+        JSON.stringify({ error: 'Video still processing on YouTube or currently live', code: 'no_duration' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    console.log(`Video passed initial checks. Submitting to AssemblyAI...`);
+    // Only block if actively live (has started but not ended)
+    const isCurrentlyLive = ytVideo.liveStreamingDetails?.actualStartTime && 
+                           !ytVideo.liveStreamingDetails?.actualEndTime;
+    
+    if (isCurrentlyLive) {
+      await fetch(
+        `${supabaseUrl}/rest/v1/videos?youtube_id=eq.${youtube_id}`,
+        {
+          method: 'PATCH',
+          headers: {
+            apikey: supabaseKey,
+            Authorization: `Bearer ${supabaseKey}`,
+            'Content-Type': 'application/json',
+            Prefer: 'return=minimal',
+          },
+          body: JSON.stringify({
+            status: 'failed',
+            error_reason: 'currently_live',
+          }),
+        }
+      );
+      
+      console.log(`Video ${video.youtube_id} is currently live streaming`);
+      return new Response(
+        JSON.stringify({ error: 'Video is currently live', code: 'currently_live' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    console.log(`Video passed validation (duration: ${ytVideo.contentDetails.duration}). Submitting to AssemblyAI...`);
 
     // GATE 2: Submit to AssemblyAI with retry logic
     let submitResponse;
