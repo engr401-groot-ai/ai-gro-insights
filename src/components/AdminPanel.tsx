@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
 import { Download, FileText, Sparkles, CheckCircle2, Loader2 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Progress } from "@/components/ui/progress";
 import { VideoUpload } from "@/components/VideoUpload";
 import { KeywordManager } from "@/components/KeywordManager";
 
@@ -14,7 +15,53 @@ export const AdminPanel = () => {
   const [isGeneratingEmbeddings, setIsGeneratingEmbeddings] = useState(false);
   const [isBatchGenerating, setIsBatchGenerating] = useState(false);
   const [isProcessingAll, setIsProcessingAll] = useState(false);
+  const [transcriptionProgress, setTranscriptionProgress] = useState({
+    total: 0,
+    completed: 0,
+    processing: 0,
+    failed: 0,
+  });
   const { toast } = useToast();
+
+  // Real-time subscription to track video status changes
+  useEffect(() => {
+    if (!isTranscribing) return;
+
+    const channel = supabase
+      .channel('video-status-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'videos'
+        },
+        (payload) => {
+          console.log('Video status changed:', payload);
+          updateProgressCounts();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [isTranscribing]);
+
+  const updateProgressCounts = async () => {
+    const { data: videos } = await supabase
+      .from('videos')
+      .select('status');
+
+    if (videos) {
+      setTranscriptionProgress({
+        total: videos.length,
+        completed: videos.filter(v => v.status === 'completed').length,
+        processing: videos.filter(v => v.status === 'processing').length,
+        failed: videos.filter(v => v.status === 'failed').length,
+      });
+    }
+  };
 
   const runFullPipeline = async () => {
     setIsFetching(true);
@@ -96,6 +143,10 @@ export const AdminPanel = () => {
 
   const transcribeVideos = async () => {
     setIsTranscribing(true);
+    
+    // Initialize progress tracking
+    await updateProgressCounts();
+    
     try {
       const { data: { session } } = await supabase.auth.getSession();
       // Get all pending videos
@@ -103,7 +154,7 @@ export const AdminPanel = () => {
         .from('videos')
         .select('id')
         .eq('status', 'pending')
-        .limit(5); // Process 5 at a time
+        .limit(100); // Process up to 100 at a time
 
       if (videosError) throw videosError;
 
@@ -120,6 +171,12 @@ export const AdminPanel = () => {
       const BATCH_SIZE = 5;
       const BATCH_DELAY_MS = 2000; // 2 second delay between batches
       
+      // Set initial progress
+      setTranscriptionProgress(prev => ({
+        ...prev,
+        total: videos.length,
+      }));
+
       toast({
         title: 'Starting Transcription',
         description: `Processing ${videos.length} videos in batches of ${BATCH_SIZE}...`,
@@ -153,6 +210,9 @@ export const AdminPanel = () => {
         title: 'Transcription Started!',
         description: `Initiated transcription for ${videos.length} videos. This will take some time.`,
       });
+      
+      // Final progress update
+      await updateProgressCounts();
     } catch (error) {
       console.error('Error transcribing videos:', error);
       toast({
@@ -162,6 +222,10 @@ export const AdminPanel = () => {
       });
     } finally {
       setIsTranscribing(false);
+      // Reset progress after a delay
+      setTimeout(() => {
+        setTranscriptionProgress({ total: 0, completed: 0, processing: 0, failed: 0 });
+      }, 5000);
     }
   };
 
@@ -410,6 +474,36 @@ export const AdminPanel = () => {
                 )}
               </Button>
             </div>
+
+            {/* Progress Bar */}
+            {isTranscribing && transcriptionProgress.total > 0 && (
+              <div className="ml-11 mt-2 p-4 bg-muted/50 rounded-lg space-y-3">
+                <div className="flex justify-between text-sm">
+                  <span className="font-medium text-foreground">Transcription Progress</span>
+                  <span className="text-muted-foreground">
+                    {transcriptionProgress.completed + transcriptionProgress.processing + transcriptionProgress.failed} / {transcriptionProgress.total}
+                  </span>
+                </div>
+                <Progress 
+                  value={((transcriptionProgress.completed + transcriptionProgress.failed) / transcriptionProgress.total) * 100} 
+                  className="h-2"
+                />
+                <div className="flex gap-4 text-xs text-muted-foreground">
+                  <span className="flex items-center gap-1">
+                    <div className="w-2 h-2 rounded-full bg-green-500" />
+                    Completed: {transcriptionProgress.completed}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                    Processing: {transcriptionProgress.processing}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <div className="w-2 h-2 rounded-full bg-red-500" />
+                    Failed: {transcriptionProgress.failed}
+                  </span>
+                </div>
+              </div>
+            )}
 
             <div className="flex items-center gap-3">
               <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold">
