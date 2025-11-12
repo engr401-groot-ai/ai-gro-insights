@@ -16,30 +16,33 @@ export const AdminPanel = () => {
   const [isBatchGenerating, setIsBatchGenerating] = useState(false);
   const [isProcessingAll, setIsProcessingAll] = useState(false);
   const [isRetrying, setIsRetrying] = useState(false);
-  const [transcriptionProgress, setTranscriptionProgress] = useState({
+  const [videoStats, setVideoStats] = useState({
     total: 0,
-    completed: 0,
+    pending: 0,
     processing: 0,
+    completed: 0,
     failed: 0,
   });
   const { toast } = useToast();
 
-  // Real-time subscription to track video status changes
+  // Real-time subscription to track ALL video status changes (always active)
   useEffect(() => {
-    if (!isTranscribing) return;
+    // Initial load
+    updateVideoStats();
 
+    // Subscribe to real-time updates
     const channel = supabase
       .channel('video-status-changes')
       .on(
         'postgres_changes',
         {
-          event: 'UPDATE',
+          event: '*',
           schema: 'public',
           table: 'videos'
         },
         (payload) => {
           console.log('Video status changed:', payload);
-          updateProgressCounts();
+          updateVideoStats();
         }
       )
       .subscribe();
@@ -47,18 +50,19 @@ export const AdminPanel = () => {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [isTranscribing]);
+  }, []);
 
-  const updateProgressCounts = async () => {
+  const updateVideoStats = async () => {
     const { data: videos } = await supabase
       .from('videos')
       .select('status');
 
     if (videos) {
-      setTranscriptionProgress({
+      setVideoStats({
         total: videos.length,
-        completed: videos.filter(v => v.status === 'completed').length,
+        pending: videos.filter(v => v.status === 'pending').length,
         processing: videos.filter(v => v.status === 'processing').length,
+        completed: videos.filter(v => v.status === 'completed').length,
         failed: videos.filter(v => v.status === 'failed').length,
       });
     }
@@ -146,7 +150,7 @@ export const AdminPanel = () => {
     setIsTranscribing(true);
     
     // Initialize progress tracking
-    await updateProgressCounts();
+    await updateVideoStats();
     
     try {
       const { data: { session } } = await supabase.auth.getSession();
@@ -172,11 +176,6 @@ export const AdminPanel = () => {
       const BATCH_SIZE = 5;
       const BATCH_DELAY_MS = 2000; // 2 second delay between batches
       
-      // Set initial progress
-      setTranscriptionProgress(prev => ({
-        ...prev,
-        total: videos.length,
-      }));
 
       toast({
         title: 'Starting Transcription',
@@ -213,7 +212,7 @@ export const AdminPanel = () => {
       });
       
       // Final progress update
-      await updateProgressCounts();
+      await updateVideoStats();
     } catch (error) {
       console.error('Error transcribing videos:', error);
       toast({
@@ -223,10 +222,6 @@ export const AdminPanel = () => {
       });
     } finally {
       setIsTranscribing(false);
-      // Reset progress after a delay
-      setTimeout(() => {
-        setTranscriptionProgress({ total: 0, completed: 0, processing: 0, failed: 0 });
-      }, 5000);
     }
   };
 
@@ -455,6 +450,56 @@ export const AdminPanel = () => {
         <h3 className="font-semibold text-foreground">Admin Panel</h3>
       </div>
 
+      {/* Real-time Video Processing Status */}
+      {videoStats.total > 0 && (
+        <div className="p-4 bg-gradient-to-r from-primary/10 via-accent/5 to-primary/10 border border-primary/30 rounded-lg space-y-3">
+          <div className="flex items-center justify-between">
+            <h4 className="font-semibold text-foreground">Video Processing Status</h4>
+            <span className="text-sm text-muted-foreground">Live Updates</span>
+          </div>
+          
+          <div className="grid grid-cols-5 gap-2">
+            <div className="p-3 bg-background/50 rounded-md text-center">
+              <div className="text-2xl font-bold text-foreground">{videoStats.total}</div>
+              <div className="text-xs text-muted-foreground">Total</div>
+            </div>
+            <div className="p-3 bg-yellow-500/10 rounded-md text-center border border-yellow-500/20">
+              <div className="text-2xl font-bold text-yellow-600 dark:text-yellow-400">{videoStats.pending}</div>
+              <div className="text-xs text-yellow-600 dark:text-yellow-400">Pending</div>
+            </div>
+            <div className="p-3 bg-blue-500/10 rounded-md text-center border border-blue-500/20">
+              <div className="text-2xl font-bold text-blue-600 dark:text-blue-400 flex items-center justify-center gap-1">
+                {videoStats.processing}
+                {videoStats.processing > 0 && <Loader2 className="h-4 w-4 animate-spin" />}
+              </div>
+              <div className="text-xs text-blue-600 dark:text-blue-400">Processing</div>
+            </div>
+            <div className="p-3 bg-green-500/10 rounded-md text-center border border-green-500/20">
+              <div className="text-2xl font-bold text-green-600 dark:text-green-400">{videoStats.completed}</div>
+              <div className="text-xs text-green-600 dark:text-green-400">Completed</div>
+            </div>
+            <div className="p-3 bg-red-500/10 rounded-md text-center border border-red-500/20">
+              <div className="text-2xl font-bold text-red-600 dark:text-red-400">{videoStats.failed}</div>
+              <div className="text-xs text-red-600 dark:text-red-400">Failed</div>
+            </div>
+          </div>
+
+          {/* Progress Bar */}
+          {videoStats.total > 0 && (
+            <div className="space-y-1">
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span>Overall Progress</span>
+                <span>{Math.round((videoStats.completed / videoStats.total) * 100)}% Complete</span>
+              </div>
+              <Progress 
+                value={(videoStats.completed / videoStats.total) * 100} 
+                className="h-2"
+              />
+            </div>
+          )}
+        </div>
+      )}
+
       <Tabs defaultValue="pipeline" className="w-full">
         <TabsList className="grid w-full grid-cols-3">
           <TabsTrigger value="pipeline">Pipeline</TabsTrigger>
@@ -554,35 +599,6 @@ export const AdminPanel = () => {
               </Button>
             </div>
 
-            {/* Progress Bar */}
-            {isTranscribing && transcriptionProgress.total > 0 && (
-              <div className="ml-11 mt-2 p-4 bg-muted/50 rounded-lg space-y-3">
-                <div className="flex justify-between text-sm">
-                  <span className="font-medium text-foreground">Transcription Progress</span>
-                  <span className="text-muted-foreground">
-                    {transcriptionProgress.completed + transcriptionProgress.processing + transcriptionProgress.failed} / {transcriptionProgress.total}
-                  </span>
-                </div>
-                <Progress 
-                  value={((transcriptionProgress.completed + transcriptionProgress.failed) / transcriptionProgress.total) * 100} 
-                  className="h-2"
-                />
-                <div className="flex gap-4 text-xs text-muted-foreground">
-                  <span className="flex items-center gap-1">
-                    <div className="w-2 h-2 rounded-full bg-green-500" />
-                    Completed: {transcriptionProgress.completed}
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
-                    Processing: {transcriptionProgress.processing}
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <div className="w-2 h-2 rounded-full bg-red-500" />
-                    Failed: {transcriptionProgress.failed}
-                  </span>
-                </div>
-              </div>
-            )}
 
             <div className="flex items-center gap-3">
               <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center text-primary font-semibold">
