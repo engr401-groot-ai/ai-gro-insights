@@ -106,16 +106,8 @@ serve(async (req) => {
     }
     
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-    const modalEndpointUrl = Deno.env.get('MODAL_ENDPOINT_URL')!;
+    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const youtubeApiKey = Deno.env.get('YOUTUBE_API_KEY')!;
-    
-    if (!modalEndpointUrl) {
-      return new Response(
-        JSON.stringify({ error: 'MODAL_ENDPOINT_URL not configured. Please deploy Modal service and add endpoint URL.' }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
     
     const supabase = createClient(supabaseUrl, supabaseKey, {
       global: { headers: { Authorization: authHeader } }
@@ -262,9 +254,7 @@ serve(async (req) => {
       );
     }
 
-    console.log(`Video passed validation (duration: ${ytVideo.contentDetails.duration}). Submitting to Modal Whisper...`);
-
-    const youtubeUrl = `https://www.youtube.com/watch?v=${youtube_id}`;
+    console.log(`Video passed validation (duration: ${ytVideo.contentDetails.duration}). Fetching captions...`);
 
     // Update video status to processing
     await fetch(
@@ -285,214 +275,48 @@ serve(async (req) => {
       }
     );
 
-    // Call Modal Whisper service with retry logic
-    let modalResponse;
+    // Try to fetch official captions
     try {
-      console.log(`Calling Modal endpoint: ${modalEndpointUrl}`);
-      modalResponse = await fetchWithRetry(
-        modalEndpointUrl,
+      const caps = await fetchOfficialTranscript(youtube_id);
+      const segments = segmentCaptions30s(
+        caps.map((c: any) => ({ text: c.text, duration: c.duration, offset: c.offset }))
+      );
+
+      if (!segments.length) {
+        throw new Error("No segments created from captions");
+      }
+
+      console.log(`Successfully fetched captions: ${segments.length} segments`);
+      
+      const fullText = segments.map(s => s.text).join(" ");
+
+      // Insert full transcription
+      const transRes = await fetch(
+        `${supabaseUrl}/rest/v1/transcriptions`,
         {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            video_url: youtubeUrl,
-          }),
-        },
-        3, // 3 retries
-        5000 // 5 second initial delay
-      );
-    } catch (modalErr) {
-      const modalErrorMsg = modalErr instanceof Error ? modalErr.message : String(modalErr);
-      console.error(`Modal request failed after retries: ${modalErrorMsg}. Trying caption fallback...`);
-      
-      // Fallback to official captions if Modal completely fails
-      try {
-        const caps = await fetchOfficialTranscript(youtube_id);
-        const segments = segmentCaptions30s(
-          caps.map((c: any) => ({ text: c.text, duration: c.duration, offset: c.offset }))
-        );
-
-        if (!segments.length) {
-          throw new Error("No segments created from captions");
-        }
-
-        console.log(`Using caption fallback after Modal failure: ${segments.length} segments`);
-        
-        const fullText = segments.map(s => s.text).join(" ");
-
-        // Insert full transcription
-        const transRes = await fetch(
-          `${supabaseUrl}/rest/v1/transcriptions`,
-          {
-            method: 'POST',
-            headers: {
-              apikey: supabaseKey,
-              Authorization: `Bearer ${supabaseKey}`,
-              'Content-Type': 'application/json',
-              Prefer: 'return=representation',
-            },
-            body: JSON.stringify({
-              video_id: video.id,
-              full_text: fullText,
-            }),
-          }
-        );
-
-        const transcriptionData = await transRes.json();
-        const transcriptionId = Array.isArray(transcriptionData) ? transcriptionData[0].id : transcriptionData.id;
-
-        // Insert segments
-        const segmentRows = segments.map((seg) => ({
-          video_id: video.id,
-          segment_text: seg.text,
-          start_time: seg.start,
-          end_time: seg.end,
-        }));
-
-        await fetch(
-          `${supabaseUrl}/rest/v1/transcript_segments`,
-          {
-            method: 'POST',
-            headers: {
-              apikey: supabaseKey,
-              Authorization: `Bearer ${supabaseKey}`,
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify(segmentRows),
-          }
-        );
-
-        // Mark as completed
-        await fetch(
-          `${supabaseUrl}/rest/v1/videos?youtube_id=eq.${youtube_id}`,
-          {
-            method: 'PATCH',
-            headers: {
-              apikey: supabaseKey,
-              Authorization: `Bearer ${supabaseKey}`,
-              'Content-Type': 'application/json',
-              Prefer: 'return=minimal',
-            },
-            body: JSON.stringify({ 
-              status: 'completed',
-              transcript_id: transcriptionId,
-              error_reason: null
-            }),
-          }
-        );
-
-        // Trigger embeddings generation
-        try {
-          await supabase.functions.invoke("batch-generate-embeddings", {
-            body: { youtube_id },
-          });
-        } catch (embedErr) {
-          console.error("Failed to trigger embeddings:", embedErr);
-        }
-
-        return new Response(
-          JSON.stringify({ 
-            success: true,
-            message: "Transcription completed using caption fallback (Modal unavailable)",
-            youtube_id,
-            segments_count: segments.length,
-            method: "captions"
-          }),
-          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-
-      } catch (capErr) {
-        const capErrorMsg = capErr instanceof Error ? capErr.message : String(capErr);
-        console.error(`Caption fallback also failed: ${capErrorMsg}`);
-        
-        // Both Modal and captions failed
-        await fetch(
-          `${supabaseUrl}/rest/v1/videos?youtube_id=eq.${youtube_id}`,
-          {
-            method: 'PATCH',
-            headers: {
-              apikey: supabaseKey,
-              Authorization: `Bearer ${supabaseKey}`,
-              'Content-Type': 'application/json',
-              Prefer: 'return=minimal',
-            },
-            body: JSON.stringify({ 
-              status: 'failed',
-              error_reason: 'modal_and_captions_failed'
-            }),
-          }
-        );
-
-        return new Response(
-          JSON.stringify({ 
-            error: "Modal service unavailable and no captions available",
-            youtube_id,
-            modal_error: modalErrorMsg,
-            caption_error: capErrorMsg
-          }),
-          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
-      }
-    }
-
-    // Check Modal response status
-    if (!modalResponse.ok) {
-      const errorText = await modalResponse.text();
-      console.error(`Modal returned error: ${errorText}`);
-      
-      await fetch(
-        `${supabaseUrl}/rest/v1/videos?youtube_id=eq.${youtube_id}`,
-        {
-          method: 'PATCH',
           headers: {
             apikey: supabaseKey,
             Authorization: `Bearer ${supabaseKey}`,
             'Content-Type': 'application/json',
-            Prefer: 'return=minimal',
+            Prefer: 'return=representation',
           },
           body: JSON.stringify({
-            status: 'failed',
-            error_reason: 'modal_error',
+            video_id: video.id,
+            full_text: fullText,
           }),
         }
       );
-      
-      throw new Error(`Modal transcription failed: ${errorText}`);
-    }
 
-    const modalData = await modalResponse.json();
-    console.log('Modal transcription completed successfully');
+      const transcriptionData = await transRes.json();
+      const transcriptionId = Array.isArray(transcriptionData) ? transcriptionData[0].id : transcriptionData.id;
 
-    // Store the full transcript
-    const transRes = await fetch(
-      `${supabaseUrl}/rest/v1/transcriptions`,
-      {
-        method: 'POST',
-        headers: {
-          apikey: supabaseKey,
-          Authorization: `Bearer ${supabaseKey}`,
-          'Content-Type': 'application/json',
-          Prefer: 'return=representation',
-        },
-        body: JSON.stringify({
-          video_id: video.id,
-          full_text: modalData.text,
-        }),
-      }
-    );
-
-    const transcriptionData = await transRes.json();
-    const transcriptionId = Array.isArray(transcriptionData) ? transcriptionData[0].id : transcriptionData.id;
-
-    // Store segments if provided
-    if (modalData.segments && modalData.segments.length > 0) {
-      const segmentRows = modalData.segments.map((seg: any) => ({
+      // Insert segments
+      const segmentRows = segments.map((seg) => ({
         video_id: video.id,
         segment_text: seg.text,
-        start_time: Math.floor(seg.start),
-        end_time: Math.floor(seg.end),
+        start_time: seg.start,
+        end_time: seg.end,
       }));
 
       await fetch(
@@ -507,49 +331,80 @@ serve(async (req) => {
           body: JSON.stringify(segmentRows),
         }
       );
-    }
 
-    // Mark video as completed
-    await fetch(
-      `${supabaseUrl}/rest/v1/videos?youtube_id=eq.${youtube_id}`,
-      {
-        method: 'PATCH',
-        headers: {
-          apikey: supabaseKey,
-          Authorization: `Bearer ${supabaseKey}`,
-          'Content-Type': 'application/json',
-          Prefer: 'return=minimal',
-        },
-        body: JSON.stringify({
-          status: 'completed',
-          transcript_id: transcriptionId,
-          error_reason: null,
-        }),
+      // Mark as completed
+      await fetch(
+        `${supabaseUrl}/rest/v1/videos?youtube_id=eq.${youtube_id}`,
+        {
+          method: 'PATCH',
+          headers: {
+            apikey: supabaseKey,
+            Authorization: `Bearer ${supabaseKey}`,
+            'Content-Type': 'application/json',
+            Prefer: 'return=minimal',
+          },
+          body: JSON.stringify({ 
+            status: 'completed',
+            transcript_id: transcriptionId,
+            error_reason: null
+          }),
+        }
+      );
+
+      // Trigger embeddings generation
+      try {
+        await supabase.functions.invoke("batch-generate-embeddings", {
+          body: { youtube_id },
+        });
+      } catch (embedErr) {
+        console.error("Failed to trigger embeddings:", embedErr);
       }
-    );
 
-    // Trigger embeddings generation
-    try {
-      await supabase.functions.invoke("batch-generate-embeddings", {
-        body: { youtube_id },
-      });
-    } catch (embedErr) {
-      console.error("Failed to trigger embeddings:", embedErr);
+      console.log(`✓ Transcription completed successfully for: ${video.title}`);
+
+      return new Response(
+        JSON.stringify({ 
+          success: true, 
+          message: 'Transcription completed using YouTube captions',
+          youtube_id,
+          segments_count: segments.length,
+          method: 'captions',
+          status: 'completed'
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+
+    } catch (capErr) {
+      const capErrorMsg = capErr instanceof Error ? capErr.message : String(capErr);
+      console.error(`Caption fetch failed: ${capErrorMsg}`);
+      
+      // Mark as failed
+      await fetch(
+        `${supabaseUrl}/rest/v1/videos?youtube_id=eq.${youtube_id}`,
+        {
+          method: 'PATCH',
+          headers: {
+            apikey: supabaseKey,
+            Authorization: `Bearer ${supabaseKey}`,
+            'Content-Type': 'application/json',
+            Prefer: 'return=minimal',
+          },
+          body: JSON.stringify({ 
+            status: 'failed',
+            error_reason: 'no_captions_available'
+          }),
+        }
+      );
+
+      return new Response(
+        JSON.stringify({ 
+          error: "No captions available for this video",
+          youtube_id,
+          caption_error: capErrorMsg
+        }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
-
-    console.log(`✓ Transcription completed successfully for: ${video.title}`);
-
-    return new Response(
-      JSON.stringify({ 
-        success: true, 
-        message: 'Transcription completed via Modal Whisper',
-        youtube_id,
-        segments_count: modalData.segments?.length || 0,
-        method: 'modal_whisper',
-        status: 'completed'
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
 
   } catch (error) {
     console.error('Error in start-transcription:', error);
