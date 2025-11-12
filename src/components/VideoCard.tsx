@@ -70,7 +70,12 @@ export const VideoCard = ({
             className="hover:bg-primary/10 hover:text-primary"
             onClick={(e) => {
               e.preventDefault();
-              window.open(url, '_blank', 'noopener,noreferrer');
+              const opened = window.open(url, '_blank', 'noopener,noreferrer');
+              if (!opened) {
+                // Fallback: copy to clipboard if popup blocked
+                navigator.clipboard.writeText(url);
+                alert('YouTube link copied to clipboard (popup blocked)');
+              }
             }}
           >
             <ExternalLink className="h-4 w-4" />
