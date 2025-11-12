@@ -28,7 +28,10 @@ import {
   XCircle, 
   Clock,
   FileText,
-  AlertCircle
+  AlertCircle,
+  Play,
+  RotateCcw,
+  Eye
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
@@ -56,6 +59,7 @@ export default function TranscriptionStatus() {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [isLoading, setIsLoading] = useState(true);
+  const [processingVideoId, setProcessingVideoId] = useState<string | null>(null);
   const navigate = useNavigate();
   const { toast } = useToast();
 
@@ -248,6 +252,65 @@ export default function TranscriptionStatus() {
     }
   };
 
+  const transcribeVideo = async (videoId: string, youtubeId: string) => {
+    setProcessingVideoId(videoId);
+    try {
+      toast({
+        title: 'Starting Transcription',
+        description: 'Processing video...',
+      });
+
+      const { error } = await supabase.functions.invoke('start-transcription', {
+        body: { youtube_id: youtubeId }
+      });
+
+      if (error) throw error;
+
+      toast({
+        title: 'Transcription Started',
+        description: 'Video is being processed. Status will update automatically.',
+      });
+    } catch (error) {
+      console.error('Error starting transcription:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to start transcription',
+        variant: 'destructive',
+      });
+    } finally {
+      setProcessingVideoId(null);
+    }
+  };
+
+  const retryVideo = async (videoId: string, youtubeId: string) => {
+    setProcessingVideoId(videoId);
+    try {
+      // Reset status to pending
+      const { error: updateError } = await supabase
+        .from('videos')
+        .update({ 
+          status: 'pending', 
+          error_reason: null,
+          processing_started_at: null,
+          processing_completed_at: null
+        })
+        .eq('id', videoId);
+
+      if (updateError) throw updateError;
+
+      // Trigger transcription
+      await transcribeVideo(videoId, youtubeId);
+    } catch (error) {
+      console.error('Error retrying video:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to retry video',
+        variant: 'destructive',
+      });
+      setProcessingVideoId(null);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-background">
       <div className="container mx-auto p-6 space-y-6">
@@ -350,12 +413,13 @@ export default function TranscriptionStatus() {
                   <TableHead>Processing Time</TableHead>
                   <TableHead>Transcript Size</TableHead>
                   <TableHead>Error Reason</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {filteredVideos.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={8} className="text-center py-12 text-muted-foreground">
+                    <TableCell colSpan={9} className="text-center py-12 text-muted-foreground">
                       No videos found
                     </TableCell>
                   </TableRow>
@@ -398,6 +462,64 @@ export default function TranscriptionStatus() {
                         ) : (
                           <span className="text-muted-foreground">-</span>
                         )}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex items-center justify-end gap-2">
+                          {video.status === 'pending' && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => transcribeVideo(video.id, video.youtube_id)}
+                              disabled={processingVideoId === video.id}
+                            >
+                              {processingVideoId === video.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <>
+                                  <Play className="h-4 w-4 mr-1" />
+                                  Transcribe
+                                </>
+                              )}
+                            </Button>
+                          )}
+                          {video.status === 'failed' && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => retryVideo(video.id, video.youtube_id)}
+                              disabled={processingVideoId === video.id}
+                            >
+                              {processingVideoId === video.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <>
+                                  <RotateCcw className="h-4 w-4 mr-1" />
+                                  Retry
+                                </>
+                              )}
+                            </Button>
+                          )}
+                          {video.status === 'processing' && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              disabled
+                            >
+                              <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                              Processing...
+                            </Button>
+                          )}
+                          {video.status === 'completed' && video.segment_count > 0 && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => navigate(`/?video=${video.youtube_id}`)}
+                            >
+                              <Eye className="h-4 w-4 mr-1" />
+                              View
+                            </Button>
+                          )}
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))
