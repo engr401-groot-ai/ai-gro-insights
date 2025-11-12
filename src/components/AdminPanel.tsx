@@ -1,13 +1,14 @@
 import { useState, useEffect } from 'react';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
-import { Download, FileText, Sparkles, CheckCircle2, Loader2 } from 'lucide-react';
+import { Download, FileText, Sparkles, CheckCircle2, Loader2, BarChart3 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useToast } from '@/hooks/use-toast';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Progress } from "@/components/ui/progress";
 import { VideoUpload } from "@/components/VideoUpload";
 import { KeywordManager } from "@/components/KeywordManager";
+import { useNavigate } from 'react-router-dom';
 
 export const AdminPanel = () => {
   const [isFetching, setIsFetching] = useState(false);
@@ -24,6 +25,7 @@ export const AdminPanel = () => {
     failed: 0,
   });
   const { toast } = useToast();
+  const navigate = useNavigate();
 
   // Real-time subscription to track ALL video status changes (always active)
   useEffect(() => {
@@ -445,9 +447,19 @@ export const AdminPanel = () => {
 
   return (
     <Card className="p-6 space-y-4 bg-gradient-card border-2 border-primary/20">
-      <div className="flex items-center gap-2 pb-4 border-b border-border">
-        <Sparkles className="h-5 w-5 text-primary" />
-        <h3 className="font-semibold text-foreground">Admin Panel</h3>
+      <div className="flex items-center justify-between pb-4 border-b border-border">
+        <div className="flex items-center gap-2">
+          <Sparkles className="h-5 w-5 text-primary" />
+          <h3 className="font-semibold text-foreground">Admin Panel</h3>
+        </div>
+        <Button 
+          variant="outline" 
+          size="sm"
+          onClick={() => navigate('/transcription-status')}
+        >
+          <BarChart3 className="h-4 w-4 mr-2" />
+          View Detailed Status
+        </Button>
       </div>
 
       {/* Real-time Video Processing Status */}
