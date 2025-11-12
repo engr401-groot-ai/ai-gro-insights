@@ -49,18 +49,54 @@ async function resolveAudioUrl(youtube_id: string): Promise<string> {
   const yt = await Innertube.create();
   const info = await yt.getInfo(youtube_id);
 
-  // Prefer audio-only adaptive formats (mp4/aac or webm/opus)
-  const fmts = info.streaming_data?.adaptive_formats ?? [];
-  const audioOnly = fmts
-    .filter((f: any) => (f.mime_type ?? "").startsWith("audio/") && !!f.url)
-    // sort by approx bitrate descending
+  console.log(`[resolveAudioUrl] Got video info for ${youtube_id}`);
+  
+  // Check what streaming data we have
+  const streamingData = info.streaming_data;
+  console.log(`[resolveAudioUrl] streaming_data exists: ${!!streamingData}`);
+  
+  if (!streamingData) {
+    throw new Error("No streaming data available - video may be restricted");
+  }
+
+  const formats = streamingData.formats ?? [];
+  const adaptiveFormats = streamingData.adaptive_formats ?? [];
+  console.log(`[resolveAudioUrl] formats: ${formats.length}, adaptive_formats: ${adaptiveFormats.length}`);
+
+  // Try adaptive formats first (audio-only)
+  const audioOnly = adaptiveFormats
+    .filter((f: any) => {
+      const mimeType = f.mime_type ?? f.mimeType ?? "";
+      const hasUrl = !!f.url;
+      const isAudio = mimeType.startsWith("audio/");
+      console.log(`[resolveAudioUrl] Format: mime=${mimeType}, hasUrl=${hasUrl}, isAudio=${isAudio}`);
+      return isAudio && hasUrl;
+    })
     .sort((a: any, b: any) => (b.bitrate ?? 0) - (a.bitrate ?? 0));
 
-  if (audioOnly.length === 0) {
-    throw new Error("No direct audio URL found (format blocked or ciphered).");
+  if (audioOnly.length > 0) {
+    console.log(`[resolveAudioUrl] Found ${audioOnly.length} audio-only formats, using best`);
+    return audioOnly[0].url!;
   }
-  // Most URLs have an `expire=` param; AssemblyAI should fetch quickly after submit.
-  return audioOnly[0].url!;
+
+  // Fallback: try any format with audio (including video+audio)
+  console.log(`[resolveAudioUrl] No audio-only formats, trying combined formats...`);
+  const allFormats = [...formats, ...adaptiveFormats];
+  const anyAudio = allFormats
+    .filter((f: any) => {
+      const hasUrl = !!f.url;
+      const mimeType = f.mime_type ?? f.mimeType ?? "";
+      console.log(`[resolveAudioUrl] Combined format: mime=${mimeType}, hasUrl=${hasUrl}`);
+      return hasUrl && (mimeType.includes("audio") || f.has_audio);
+    })
+    .sort((a: any, b: any) => (b.bitrate ?? 0) - (a.bitrate ?? 0));
+
+  if (anyAudio.length > 0) {
+    console.log(`[resolveAudioUrl] Using combined audio+video format`);
+    return anyAudio[0].url!;
+  }
+
+  throw new Error("No direct audio URL found (format blocked or ciphered).");
 }
 
 serve(async (req) => {
