@@ -1,7 +1,6 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { Innertube } from "https://esm.sh/youtubei.js@10.5.0/web.bundle.min.js";
 import { YoutubeTranscript } from "https://esm.sh/youtube-transcript@1.2.1";
 
 const corsHeaders = {
@@ -9,14 +8,14 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const ASSEMBLYAI_API_URL = 'https://api.assemblyai.com/v2';
 const YOUTUBE_API_URL = 'https://www.googleapis.com/youtube/v3';
 
 // Retry with exponential backoff
 async function fetchWithRetry(
   url: string,
   options: RequestInit,
-  maxRetries = 3
+  maxRetries = 3,
+  initialDelay = 1000
 ): Promise<Response> {
   let lastError: Error | null = null;
   
@@ -34,9 +33,9 @@ async function fetchWithRetry(
       lastError = error as Error;
     }
     
-    // Exponential backoff: 1s, 4s, 10s
+    // Exponential backoff
     if (attempt < maxRetries - 1) {
-      const delay = Math.pow(2, attempt) * 1000;
+      const delay = initialDelay * Math.pow(2, attempt);
       console.log(`Retry attempt ${attempt + 1}/${maxRetries} after ${delay}ms`);
       await new Promise(resolve => setTimeout(resolve, delay));
     }
@@ -45,60 +44,7 @@ async function fetchWithRetry(
   throw lastError || new Error('Max retries exceeded');
 }
 
-// Pick the best audio-only stream
-async function resolveAudioUrl(youtube_id: string): Promise<string> {
-  const yt = await Innertube.create();
-  const info = await yt.getInfo(youtube_id);
-
-  console.log(`[resolveAudioUrl] Got video info for ${youtube_id}`);
-  
-  // Check what streaming data we have
-  const streamingData = info.streaming_data;
-  console.log(`[resolveAudioUrl] streaming_data exists: ${!!streamingData}`);
-  
-  if (!streamingData) {
-    throw new Error("No streaming data available - video may be restricted");
-  }
-
-  const formats = streamingData.formats ?? [];
-  const adaptiveFormats = streamingData.adaptive_formats ?? [];
-  console.log(`[resolveAudioUrl] formats: ${formats.length}, adaptive_formats: ${adaptiveFormats.length}`);
-
-  // Try adaptive formats first (audio-only)
-  const audioOnly = adaptiveFormats
-    .filter((f: any) => {
-      const mimeType = f.mime_type ?? f.mimeType ?? "";
-      const hasUrl = !!f.url;
-      const isAudio = mimeType.startsWith("audio/");
-      console.log(`[resolveAudioUrl] Format: mime=${mimeType}, hasUrl=${hasUrl}, isAudio=${isAudio}`);
-      return isAudio && hasUrl;
-    })
-    .sort((a: any, b: any) => (b.bitrate ?? 0) - (a.bitrate ?? 0));
-
-  if (audioOnly.length > 0) {
-    console.log(`[resolveAudioUrl] Found ${audioOnly.length} audio-only formats, using best`);
-    return audioOnly[0].url!;
-  }
-
-  // Fallback: try any format with audio (including video+audio)
-  console.log(`[resolveAudioUrl] No audio-only formats, trying combined formats...`);
-  const allFormats = [...formats, ...adaptiveFormats];
-  const anyAudio = allFormats
-    .filter((f: any) => {
-      const hasUrl = !!f.url;
-      const mimeType = f.mime_type ?? f.mimeType ?? "";
-      console.log(`[resolveAudioUrl] Combined format: mime=${mimeType}, hasUrl=${hasUrl}`);
-      return hasUrl && (mimeType.includes("audio") || f.has_audio);
-    })
-    .sort((a: any, b: any) => (b.bitrate ?? 0) - (a.bitrate ?? 0));
-
-  if (anyAudio.length > 0) {
-    console.log(`[resolveAudioUrl] Using combined audio+video format`);
-    return anyAudio[0].url!;
-  }
-
-  throw new Error("No direct audio URL found (format blocked or ciphered).");
-}
+// Modal handles video download, so we don't need resolveAudioUrl anymore
 
 /** Fetch official YouTube captions/transcript */
 async function fetchOfficialTranscript(youtube_id: string) {
@@ -161,8 +107,15 @@ serve(async (req) => {
     
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-    const assemblyaiApiKey = Deno.env.get('ASSEMBLYAI_API_KEY')!;
+    const modalEndpointUrl = Deno.env.get('MODAL_ENDPOINT_URL')!;
     const youtubeApiKey = Deno.env.get('YOUTUBE_API_KEY')!;
+    
+    if (!modalEndpointUrl) {
+      return new Response(
+        JSON.stringify({ error: 'MODAL_ENDPOINT_URL not configured. Please deploy Modal service and add endpoint URL.' }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
     
     const supabase = createClient(supabaseUrl, supabaseKey, {
       global: { headers: { Authorization: authHeader } }
@@ -309,19 +262,52 @@ serve(async (req) => {
       );
     }
 
-    console.log(`Video passed validation (duration: ${ytVideo.contentDetails.duration}). Attempting audio extraction...`);
+    console.log(`Video passed validation (duration: ${ytVideo.contentDetails.duration}). Submitting to Modal Whisper...`);
 
-    let audioUrl: string | null = null;
-    
-    // Try to extract direct audio stream URL
+    const youtubeUrl = `https://www.youtube.com/watch?v=${youtube_id}`;
+
+    // Update video status to processing
+    await fetch(
+      `${supabaseUrl}/rest/v1/videos?youtube_id=eq.${youtube_id}`,
+      {
+        method: 'PATCH',
+        headers: {
+          apikey: supabaseKey,
+          Authorization: `Bearer ${supabaseKey}`,
+          'Content-Type': 'application/json',
+          Prefer: 'return=minimal',
+        },
+        body: JSON.stringify({
+          status: 'processing',
+          processing_started_at: new Date().toISOString(),
+          error_reason: null,
+        }),
+      }
+    );
+
+    // Call Modal Whisper service with retry logic
+    let modalResponse;
     try {
-      audioUrl = await resolveAudioUrl(youtube_id);
-      console.log(`Successfully resolved audio URL: ${audioUrl.substring(0, 80)}...`);
-    } catch (audioErr) {
-      const errorMsg = audioErr instanceof Error ? audioErr.message : String(audioErr);
-      console.error(`Audio extraction failed: ${errorMsg}. Trying caption fallback...`);
+      console.log(`Calling Modal endpoint: ${modalEndpointUrl}`);
+      modalResponse = await fetchWithRetry(
+        modalEndpointUrl,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            video_url: youtubeUrl,
+          }),
+        },
+        3, // 3 retries
+        5000 // 5 second initial delay
+      );
+    } catch (modalErr) {
+      const modalErrorMsg = modalErr instanceof Error ? modalErr.message : String(modalErr);
+      console.error(`Modal request failed after retries: ${modalErrorMsg}. Trying caption fallback...`);
       
-      // Fallback to official captions
+      // Fallback to official captions if Modal completely fails
       try {
         const caps = await fetchOfficialTranscript(youtube_id);
         const segments = segmentCaptions30s(
@@ -332,25 +318,9 @@ serve(async (req) => {
           throw new Error("No segments created from captions");
         }
 
-        console.log(`Using caption fallback: ${segments.length} segments created`);
+        console.log(`Using caption fallback after Modal failure: ${segments.length} segments`);
         
-        // Build full transcript text
         const fullText = segments.map(s => s.text).join(" ");
-
-        // Update video status to processing
-        await fetch(
-          `${supabaseUrl}/rest/v1/videos?youtube_id=eq.${youtube_id}`,
-          {
-            method: 'PATCH',
-            headers: {
-              apikey: supabaseKey,
-              Authorization: `Bearer ${supabaseKey}`,
-              'Content-Type': 'application/json',
-              Prefer: 'return=minimal',
-            },
-            body: JSON.stringify({ status: 'processing' }),
-          }
-        );
 
         // Insert full transcription
         const transRes = await fetch(
@@ -407,7 +377,8 @@ serve(async (req) => {
             },
             body: JSON.stringify({ 
               status: 'completed',
-              transcript_id: transcriptionId 
+              transcript_id: transcriptionId,
+              error_reason: null
             }),
           }
         );
@@ -423,7 +394,8 @@ serve(async (req) => {
 
         return new Response(
           JSON.stringify({ 
-            message: "Transcription completed using caption fallback",
+            success: true,
+            message: "Transcription completed using caption fallback (Modal unavailable)",
             youtube_id,
             segments_count: segments.length,
             method: "captions"
@@ -435,7 +407,7 @@ serve(async (req) => {
         const capErrorMsg = capErr instanceof Error ? capErr.message : String(capErr);
         console.error(`Caption fallback also failed: ${capErrorMsg}`);
         
-        // Neither audio nor captions available
+        // Both Modal and captions failed
         await fetch(
           `${supabaseUrl}/rest/v1/videos?youtube_id=eq.${youtube_id}`,
           {
@@ -448,50 +420,28 @@ serve(async (req) => {
             },
             body: JSON.stringify({ 
               status: 'failed',
-              error_reason: 'no_audio_or_captions'
+              error_reason: 'modal_and_captions_failed'
             }),
           }
         );
 
         return new Response(
           JSON.stringify({ 
-            error: "No audio stream and no official captions available",
-            youtube_id 
+            error: "Modal service unavailable and no captions available",
+            youtube_id,
+            modal_error: modalErrorMsg,
+            caption_error: capErrorMsg
           }),
-          { status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
     }
-    
-    // Continue with AssemblyAI if we have audio URL
-    if (!audioUrl) {
-      return new Response(
-        JSON.stringify({ error: "Unexpected: no audio URL after resolution" }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
 
-    console.log(`Submitting direct audio stream to AssemblyAI...`);
-
-    // GATE 2: Submit to AssemblyAI with retry logic
-    let submitResponse;
-    try {
-      submitResponse = await fetchWithRetry(
-        `${ASSEMBLYAI_API_URL}/transcript`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': assemblyaiApiKey,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            audio_url: audioUrl,
-            language_code: 'en',
-          }),
-        }
-      );
-    } catch (error) {
-      console.error('AssemblyAI submission failed after retries:', error);
+    // Check Modal response status
+    if (!modalResponse.ok) {
+      const errorText = await modalResponse.text();
+      console.error(`Modal returned error: ${errorText}`);
+      
       await fetch(
         `${supabaseUrl}/rest/v1/videos?youtube_id=eq.${youtube_id}`,
         {
@@ -504,53 +454,62 @@ serve(async (req) => {
           },
           body: JSON.stringify({
             status: 'failed',
-            error_reason: 'assemblyai_submission_failed',
+            error_reason: 'modal_error',
           }),
         }
       );
       
-      throw error;
+      throw new Error(`Modal transcription failed: ${errorText}`);
     }
 
-    if (!submitResponse.ok) {
-      const errorText = await submitResponse.text();
-      console.error('AssemblyAI submission error:', errorText);
-      
-      // Check if it's an unreachable audio error (members-only, unlisted, etc.)
-      if (errorText.includes('could not be reached') || errorText.includes('unreachable')) {
-        await fetch(
-          `${supabaseUrl}/rest/v1/videos?youtube_id=eq.${youtube_id}`,
-          {
-            method: 'PATCH',
-            headers: {
-              apikey: supabaseKey,
-              Authorization: `Bearer ${supabaseKey}`,
-              'Content-Type': 'application/json',
-              Prefer: 'return=minimal',
-            },
-            body: JSON.stringify({
-              status: 'failed',
-              error_reason: 'unreachable_audio',
-            }),
-          }
-        );
-        
-        return new Response(
-          JSON.stringify({ 
-            error: 'Audio unreachable (members-only, unlisted, or private)', 
-            code: 'unreachable_audio' 
-          }),
-          { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        );
+    const modalData = await modalResponse.json();
+    console.log('Modal transcription completed successfully');
+
+    // Store the full transcript
+    const transRes = await fetch(
+      `${supabaseUrl}/rest/v1/transcriptions`,
+      {
+        method: 'POST',
+        headers: {
+          apikey: supabaseKey,
+          Authorization: `Bearer ${supabaseKey}`,
+          'Content-Type': 'application/json',
+          Prefer: 'return=representation',
+        },
+        body: JSON.stringify({
+          video_id: video.id,
+          full_text: modalData.text,
+        }),
       }
-      
-      throw new Error(`AssemblyAI submission error: ${errorText}`);
+    );
+
+    const transcriptionData = await transRes.json();
+    const transcriptionId = Array.isArray(transcriptionData) ? transcriptionData[0].id : transcriptionData.id;
+
+    // Store segments if provided
+    if (modalData.segments && modalData.segments.length > 0) {
+      const segmentRows = modalData.segments.map((seg: any) => ({
+        video_id: video.id,
+        segment_text: seg.text,
+        start_time: Math.floor(seg.start),
+        end_time: Math.floor(seg.end),
+      }));
+
+      await fetch(
+        `${supabaseUrl}/rest/v1/transcript_segments`,
+        {
+          method: 'POST',
+          headers: {
+            apikey: supabaseKey,
+            Authorization: `Bearer ${supabaseKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(segmentRows),
+        }
+      );
     }
 
-    const { id: transcriptId } = await submitResponse.json();
-    console.log(`AssemblyAI transcript ID: ${transcriptId}`);
-
-    // Update video with transcript_id and set to processing
+    // Mark video as completed
     await fetch(
       `${supabaseUrl}/rest/v1/videos?youtube_id=eq.${youtube_id}`,
       {
@@ -562,23 +521,32 @@ serve(async (req) => {
           Prefer: 'return=minimal',
         },
         body: JSON.stringify({
-          status: 'processing',
-          transcript_id: transcriptId,
-          processing_started_at: new Date().toISOString(),
+          status: 'completed',
+          transcript_id: transcriptionId,
           error_reason: null,
         }),
       }
     );
 
-    console.log(`✓ Transcription submitted successfully for: ${video.title}`);
+    // Trigger embeddings generation
+    try {
+      await supabase.functions.invoke("batch-generate-embeddings", {
+        body: { youtube_id },
+      });
+    } catch (embedErr) {
+      console.error("Failed to trigger embeddings:", embedErr);
+    }
+
+    console.log(`✓ Transcription completed successfully for: ${video.title}`);
 
     return new Response(
       JSON.stringify({ 
         success: true, 
-        message: 'Transcription submitted',
+        message: 'Transcription completed via Modal Whisper',
         youtube_id,
-        transcriptId,
-        status: 'processing'
+        segments_count: modalData.segments?.length || 0,
+        method: 'modal_whisper',
+        status: 'completed'
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
