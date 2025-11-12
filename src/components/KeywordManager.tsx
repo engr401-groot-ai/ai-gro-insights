@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Plus, Trash2, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
@@ -169,7 +170,9 @@ export const KeywordManager = () => {
         </div>
 
         <div className="pt-4 border-t border-border">
-          <h4 className="text-sm font-semibold text-foreground mb-3">Active Keywords</h4>
+          <h4 className="text-sm font-semibold text-foreground mb-3">
+            Active Keywords ({keywords.length})
+          </h4>
           {isLoading ? (
             <div className="flex items-center justify-center py-8">
               <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
@@ -179,33 +182,35 @@ export const KeywordManager = () => {
               No keywords added yet
             </p>
           ) : (
-            <div className="space-y-2">
-              {keywords.map((kw) => (
-                <div
-                  key={kw.id}
-                  className="flex items-center justify-between p-3 rounded-lg bg-muted/50 border border-border"
-                >
-                  <div className="flex-1">
-                    <Badge variant="secondary" className="mb-1">
-                      {kw.keyword}
-                    </Badge>
-                    {kw.description && (
-                      <p className="text-xs text-muted-foreground mt-1">
-                        {kw.description}
-                      </p>
-                    )}
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleDeleteKeyword(kw.id, kw.keyword)}
-                    className="hover:bg-destructive/10 hover:text-destructive"
+            <ScrollArea className="h-[300px] pr-2">
+              <div className="space-y-2">
+                {keywords.map((kw) => (
+                  <div
+                    key={kw.id}
+                    className="flex items-center justify-between p-3 rounded-lg bg-muted/50 border border-border"
                   >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              ))}
-            </div>
+                    <div className="flex-1">
+                      <Badge variant="secondary" className="mb-1">
+                        {kw.keyword}
+                      </Badge>
+                      {kw.description && (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {kw.description}
+                        </p>
+                      )}
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleDeleteKeyword(kw.id, kw.keyword)}
+                      className="hover:bg-destructive/10 hover:text-destructive"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            </ScrollArea>
           )}
         </div>
       </div>

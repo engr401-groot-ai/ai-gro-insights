@@ -30,6 +30,8 @@ const Index = () => {
   const [dialogVideos, setDialogVideos] = useState<any[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogTitle, setDialogTitle] = useState("");
+  const [channelsDialogOpen, setChannelsDialogOpen] = useState(false);
+  const [channels, setChannels] = useState<any[]>([]);
   const { toast } = useToast();
   const { results: searchResults, isSearching, search } = useSemanticSearch();
 
@@ -45,8 +47,28 @@ const Index = () => {
     if (user) {
       loadStats();
       loadRecentVideos();
+      loadChannels();
     }
   }, [user]);
+
+  const loadChannels = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('youtube_channels')
+        .select('*')
+        .order('channel_name');
+
+      if (!error && data) {
+        setChannels(data);
+      }
+    } catch (error) {
+      console.error('Error loading channels:', error);
+    }
+  };
+
+  const showChannels = () => {
+    setChannelsDialogOpen(true);
+  };
 
   const loadStats = async () => {
     try {
@@ -251,9 +273,10 @@ const Index = () => {
           />
           <StatsCard
             title="Channels"
-            value="2"
+            value={channels.length.toString()}
             icon={Youtube}
             description="Monitored sources"
+            onClick={showChannels}
           />
         </div>
 
@@ -346,6 +369,36 @@ const Index = () => {
               ))}
             </div>
           </ScrollArea>
+        </DialogContent>
+      </Dialog>
+
+      {/* Channels Dialog */}
+      <Dialog open={channelsDialogOpen} onOpenChange={setChannelsDialogOpen}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Monitored YouTube Channels ({channels.length})</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            {channels.map((channel) => (
+              <div
+                key={channel.id}
+                className="flex items-center gap-3 p-4 rounded-lg bg-muted/50 border border-border"
+              >
+                <Youtube className="h-5 w-5 text-primary" />
+                <div className="flex-1">
+                  <p className="font-medium text-foreground">{channel.channel_name}</p>
+                  <a
+                    href={channel.channel_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-muted-foreground hover:text-primary hover:underline"
+                  >
+                    {channel.channel_url}
+                  </a>
+                </div>
+              </div>
+            ))}
+          </div>
         </DialogContent>
       </Dialog>
     </div>
