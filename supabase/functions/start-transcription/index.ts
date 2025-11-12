@@ -121,8 +121,11 @@ serve(async (req) => {
 
     const video = videos[0];
 
+    // Build canonical YouTube URL (avoid extra params that trigger consent pages)
+    const youtubeUrl = `https://www.youtube.com/watch?v=${youtube_id}`;
+
     // GATE 1: Check if video is live or still processing using YouTube API
-    console.log(`Checking video status for YouTube ID: ${video.youtube_id}`);
+    console.log(`Checking video status for YouTube ID: ${youtube_id}`);
     
     const videoDetailsResponse = await fetchWithRetry(
       `${YOUTUBE_API_URL}/videos?part=snippet,contentDetails,liveStreamingDetails&id=${video.youtube_id}&key=${youtubeApiKey}`,
@@ -230,7 +233,7 @@ serve(async (req) => {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            audio_url: video.url,
+            audio_url: youtubeUrl,
             language_code: 'en',
           }),
         }
