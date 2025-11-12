@@ -7,6 +7,8 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+const ASSEMBLYAI_API_URL = 'https://api.assemblyai.com/v2';
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -26,7 +28,7 @@ serve(async (req) => {
     
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const openaiApiKey = Deno.env.get('OPENAI_API_KEY')!;
+    const assemblyaiApiKey = Deno.env.get('ASSEMBLYAI_API_KEY')!;
     
     const supabase = createClient(supabaseUrl, supabaseKey, {
       global: { headers: { Authorization: authHeader } }
@@ -81,185 +83,66 @@ serve(async (req) => {
         console.log(`Processing: ${video.title}`);
         console.log(`YouTube URL: ${video.url}`);
 
-        // Try to get audio download URL using yt-dlp
-        let audioUrl: string | null = null;
+        // Step 1: Submit video URL to AssemblyAI
+        console.log("Submitting video to AssemblyAI for transcription...");
         
-        try {
-          const ytDlpCommand = new Deno.Command("yt-dlp", {
-            args: [
-              "-f", "bestaudio[ext=m4a]/bestaudio",
-              "-g",
-              "--no-playlist",
-              video.url
-            ],
-            stdout: "piped",
-            stderr: "piped",
-          });
-
-          const { stdout, stderr, success } = await ytDlpCommand.output();
-          
-          if (success) {
-            audioUrl = new TextDecoder().decode(stdout).trim();
-            console.log("Got audio URL via yt-dlp");
-          } else {
-            console.warn("yt-dlp failed:", new TextDecoder().decode(stderr));
-          }
-        } catch (error) {
-          console.warn("yt-dlp error:", error);
-        }
-
-        if (!audioUrl || !audioUrl.startsWith('http')) {
-          throw new Error('Failed to get audio URL from YouTube');
-        }
-
-        console.log("Downloading audio from YouTube...");
-        
-        const audioResponse = await fetch(audioUrl);
-        
-        if (!audioResponse.ok || !audioResponse.body) {
-          throw new Error('Failed to download audio');
-        }
-
-        // For large files, download audio and split into chunks
-        console.log("Downloading full audio file...");
-        
-        // Use yt-dlp to download the audio file locally
-        const audioFileName = `audio_${videoId}.m4a`;
-        const downloadCommand = new Deno.Command("yt-dlp", {
-          args: [
-            "-f", "bestaudio[ext=m4a]/bestaudio",
-            "-o", audioFileName,
-            "--no-playlist",
-            video.url
-          ],
-          stdout: "piped",
-          stderr: "piped",
+        const submitResponse = await fetch(`${ASSEMBLYAI_API_URL}/transcript`, {
+          method: 'POST',
+          headers: {
+            'Authorization': assemblyaiApiKey,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            audio_url: video.url,
+            language_code: 'en',
+          }),
         });
 
-        const { success: downloadSuccess, stderr: downloadStderr } = await downloadCommand.output();
-        
-        if (!downloadSuccess) {
-          console.error("Download failed:", new TextDecoder().decode(downloadStderr));
-          throw new Error('Failed to download audio file');
+        if (!submitResponse.ok) {
+          const errorText = await submitResponse.text();
+          throw new Error(`AssemblyAI submission error: ${errorText}`);
         }
 
-        // Get file size
-        const fileInfo = await Deno.stat(audioFileName);
-        const fileSizeMB = fileInfo.size / (1024 * 1024);
-        console.log(`Audio file size: ${fileSizeMB.toFixed(2)} MB`);
+        const { id: transcriptId } = await submitResponse.json();
+        console.log(`AssemblyAI transcript ID: ${transcriptId}`);
 
-        let transcriptionText = '';
+        // Step 2: Poll for completion
+        console.log("Waiting for transcription to complete...");
+        let transcriptionData: any = null;
+        let pollAttempts = 0;
+        const maxPollAttempts = 180; // 30 minutes max (10-second intervals)
 
-        if (fileSizeMB <= 24) {
-          // File is small enough for single Whisper call
-          console.log("Transcribing with single Whisper call...");
+        while (pollAttempts < maxPollAttempts) {
+          await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds
           
-          const audioData = await Deno.readFile(audioFileName);
-          const blob = new Blob([audioData], { type: 'audio/m4a' });
-          
-          const formData = new FormData();
-          formData.append('file', blob, 'audio.m4a');
-          formData.append('model', 'whisper-1');
-          formData.append('language', 'en');
-          formData.append('response_format', 'text');
-
-          const whisperResponse = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-            method: 'POST',
+          const statusResponse = await fetch(`${ASSEMBLYAI_API_URL}/transcript/${transcriptId}`, {
             headers: {
-              'Authorization': `Bearer ${openaiApiKey}`,
+              'Authorization': assemblyaiApiKey,
             },
-            body: formData,
           });
 
-          if (!whisperResponse.ok) {
-            const errorText = await whisperResponse.text();
-            throw new Error(`Whisper API error: ${errorText}`);
+          if (!statusResponse.ok) {
+            throw new Error('Failed to check transcription status');
           }
 
-          transcriptionText = await whisperResponse.text();
-          
-        } else {
-          // File too large - split into 20-minute chunks and transcribe each
-          console.log(`Large file detected (${fileSizeMB.toFixed(2)} MB), splitting into chunks...`);
-          
-          const videoDuration = video.duration || 3600;
-          const chunkDurationSeconds = 1200; // 20 minutes per chunk
-          const numChunks = Math.ceil(videoDuration / chunkDurationSeconds);
-          
-          console.log(`Splitting into ${numChunks} chunks of ~20 minutes each`);
+          transcriptionData = await statusResponse.json();
+          console.log(`Transcription status: ${transcriptionData.status}`);
 
-          const transcripts: string[] = [];
-
-          for (let i = 0; i < numChunks; i++) {
-            const startTime = i * chunkDurationSeconds;
-            const chunkFileName = `chunk_${videoId}_${i}.m4a`;
-            
-            console.log(`Processing chunk ${i + 1}/${numChunks} (starting at ${Math.floor(startTime / 60)}:${(startTime % 60).toString().padStart(2, '0')})...`);
-
-            // Extract chunk using ffmpeg
-            const ffmpegCommand = new Deno.Command("ffmpeg", {
-              args: [
-                "-i", audioFileName,
-                "-ss", startTime.toString(),
-                "-t", chunkDurationSeconds.toString(),
-                "-c", "copy",
-                chunkFileName
-              ],
-              stdout: "piped",
-              stderr: "piped",
-            });
-
-            const { success: ffmpegSuccess } = await ffmpegCommand.output();
-            
-            if (!ffmpegSuccess) {
-              console.warn(`Failed to extract chunk ${i + 1}, skipping...`);
-              continue;
-            }
-
-            // Transcribe chunk
-            const chunkData = await Deno.readFile(chunkFileName);
-            const chunkBlob = new Blob([chunkData], { type: 'audio/m4a' });
-            
-            const formData = new FormData();
-            formData.append('file', chunkBlob, `chunk_${i}.m4a`);
-            formData.append('model', 'whisper-1');
-            formData.append('language', 'en');
-            formData.append('response_format', 'text');
-
-            const whisperResponse = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-              method: 'POST',
-              headers: {
-                'Authorization': `Bearer ${openaiApiKey}`,
-              },
-              body: formData,
-            });
-
-            if (whisperResponse.ok) {
-              const chunkTranscript = await whisperResponse.text();
-              transcripts.push(chunkTranscript);
-              console.log(`✓ Chunk ${i + 1} transcribed (${chunkTranscript.length} chars)`);
-            } else {
-              console.warn(`Failed to transcribe chunk ${i + 1}`);
-            }
-
-            // Clean up chunk file
-            try {
-              await Deno.remove(chunkFileName);
-            } catch {}
-
-            // Small delay to avoid rate limiting
-            await new Promise(resolve => setTimeout(resolve, 1000));
+          if (transcriptionData.status === 'completed') {
+            console.log("✓ Transcription completed!");
+            break;
+          } else if (transcriptionData.status === 'error') {
+            throw new Error(`AssemblyAI transcription failed: ${transcriptionData.error}`);
           }
 
-          // Combine all transcripts
-          transcriptionText = transcripts.join(' ');
-          console.log(`Combined transcript: ${transcriptionText.length} characters`);
+          pollAttempts++;
         }
 
-        // Clean up audio file
-        try {
-          await Deno.remove(audioFileName);
-        } catch {}
+        if (!transcriptionData || transcriptionData.status !== 'completed') {
+          throw new Error('Transcription timed out');
+        }
+
+        const transcriptionText = transcriptionData.text;
 
         if (!transcriptionText || transcriptionText.length < 50) {
           throw new Error('Transcription resulted in no usable text');
@@ -282,25 +165,47 @@ serve(async (req) => {
           throw transcriptionError;
         }
 
-        // Split into segments
-        const segments = splitIntoSegments(transcriptionText);
+        // Step 3: Process timestamped segments from AssemblyAI
+        // Get sentences with timestamps (if available)
+        const words = transcriptionData.words || [];
+        console.log(`Processing ${words.length} words with timestamps...`);
         
-        console.log(`Creating ${segments.length} transcript segments...`);
+        // Group words into segments of ~500 characters
+        const segments: Array<{ text: string; start: number; end: number }> = [];
+        let currentSegment = { text: '', start: 0, end: 0 };
         
-        // Batch insert segments for better performance
-        const segmentsData = segments.map((segment, i) => {
-          const totalDuration = video.duration || 3600;
-          const startTime = Math.floor((i / segments.length) * totalDuration);
-          const endTime = Math.floor(((i + 1) / segments.length) * totalDuration);
+        for (const word of words) {
+          if (!currentSegment.start) {
+            currentSegment.start = word.start;
+          }
+          
+          const wordText = word.text + ' ';
+          
+          if (currentSegment.text.length + wordText.length > 500 && currentSegment.text.length > 0) {
+            currentSegment.end = word.end;
+            segments.push({ ...currentSegment });
+            currentSegment = { text: wordText, start: word.start, end: word.end };
+          } else {
+            currentSegment.text += wordText;
+            currentSegment.end = word.end;
+          }
+        }
+        
+        // Add the last segment
+        if (currentSegment.text.trim()) {
+          segments.push(currentSegment);
+        }
 
-          return {
-            transcription_id: transcription.id,
-            video_id: videoId,
-            segment_text: segment,
-            start_time: startTime,
-            end_time: endTime
-          };
-        });
+        console.log(`Created ${segments.length} transcript segments with timestamps`);
+        
+        // Prepare segments for database insertion
+        const segmentsData = segments.map(segment => ({
+          transcription_id: transcription.id,
+          video_id: videoId,
+          segment_text: segment.text.trim(),
+          start_time: Math.floor(segment.start / 1000), // Convert ms to seconds
+          end_time: Math.floor(segment.end / 1000),
+        }));
 
         // Insert in batches of 50 to avoid overwhelming the database
         for (let i = 0; i < segmentsData.length; i += 50) {
@@ -358,26 +263,3 @@ serve(async (req) => {
     );
   }
 });
-
-function splitIntoSegments(text: string): string[] {
-  const sentences = text.match(/[^\.!\?]+[\.!\?]+/g) || [text];
-  const segments: string[] = [];
-  let currentSegment = '';
-  
-  for (const sentence of sentences) {
-    if (currentSegment.length + sentence.length > 500) {
-      if (currentSegment) {
-        segments.push(currentSegment.trim());
-      }
-      currentSegment = sentence;
-    } else {
-      currentSegment += ' ' + sentence;
-    }
-  }
-  
-  if (currentSegment) {
-    segments.push(currentSegment.trim());
-  }
-  
-  return segments;
-}
