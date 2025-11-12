@@ -116,17 +116,42 @@ export const AdminPanel = () => {
         return;
       }
 
-      // Transcribe each video
-      for (const video of videos) {
-        await supabase.functions.invoke('transcribe-video', {
-          body: { videoId: video.id },
-          headers: { Authorization: `Bearer ${session?.access_token}` }
-        });
+      // Process in batches of 5 to respect AssemblyAI's concurrent limit
+      const BATCH_SIZE = 5;
+      const BATCH_DELAY_MS = 2000; // 2 second delay between batches
+      
+      toast({
+        title: 'Starting Transcription',
+        description: `Processing ${videos.length} videos in batches of ${BATCH_SIZE}...`,
+      });
+
+      for (let i = 0; i < videos.length; i += BATCH_SIZE) {
+        const batch = videos.slice(i, i + BATCH_SIZE);
+        const batchNumber = Math.floor(i / BATCH_SIZE) + 1;
+        const totalBatches = Math.ceil(videos.length / BATCH_SIZE);
+        
+        console.log(`Processing batch ${batchNumber}/${totalBatches} (${batch.length} videos)...`);
+        
+        // Process all videos in this batch concurrently
+        await Promise.all(
+          batch.map(video => 
+            supabase.functions.invoke('transcribe-video', {
+              body: { videoId: video.id },
+              headers: { Authorization: `Bearer ${session?.access_token}` }
+            })
+          )
+        );
+        
+        // Wait before next batch (except for last batch)
+        if (i + BATCH_SIZE < videos.length) {
+          console.log(`Waiting ${BATCH_DELAY_MS / 1000}s before next batch...`);
+          await new Promise(resolve => setTimeout(resolve, BATCH_DELAY_MS));
+        }
       }
 
       toast({
-        title: 'Transcription Complete!',
-        description: `Successfully transcribed ${videos.length} videos`,
+        title: 'Transcription Started!',
+        description: `Initiated transcription for ${videos.length} videos. This will take some time.`,
       });
     } catch (error) {
       console.error('Error transcribing videos:', error);
