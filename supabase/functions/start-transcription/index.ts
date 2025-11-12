@@ -57,10 +57,17 @@ serve(async (req) => {
       );
     }
 
-    const { videoId } = await req.json();
+    const { youtube_id } = await req.json();
+    
+    if (!youtube_id) {
+      return new Response(
+        JSON.stringify({ error: 'Missing youtube_id' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
     
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
     const assemblyaiApiKey = Deno.env.get('ASSEMBLYAI_API_KEY')!;
     const youtubeApiKey = Deno.env.get('YOUTUBE_API_KEY')!;
     
@@ -91,18 +98,28 @@ serve(async (req) => {
       );
     }
 
-    console.log(`Starting transcription submission for video ID: ${videoId}`);
+    console.log(`Starting transcription submission for YouTube ID: ${youtube_id}`);
 
-    // Get video details
-    const { data: video, error: videoError } = await supabase
-      .from('videos')
-      .select('*')
-      .eq('id', videoId)
-      .single();
+    // Get video details by youtube_id
+    const videoRes = await fetch(
+      `${supabaseUrl}/rest/v1/videos?select=*&youtube_id=eq.${youtube_id}`,
+      {
+        headers: {
+          apikey: supabaseKey,
+          Authorization: `Bearer ${supabaseKey}`,
+        },
+      }
+    );
 
-    if (videoError || !video) {
-      throw new Error('Video not found');
+    const videos = await videoRes.json();
+    if (!Array.isArray(videos) || videos.length === 0) {
+      return new Response(
+        JSON.stringify({ error: 'Video not found' }),
+        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
+
+    const video = videos[0];
 
     // GATE 1: Check if video is live or still processing using YouTube API
     console.log(`Checking video status for YouTube ID: ${video.youtube_id}`);
@@ -119,13 +136,22 @@ serve(async (req) => {
     const videoDetails = await videoDetailsResponse.json();
     
     if (!videoDetails.items || videoDetails.items.length === 0) {
-      await supabase
-        .from('videos')
-        .update({ 
-          status: 'failed',
-          error_reason: 'video_not_found'
-        })
-        .eq('id', videoId);
+      await fetch(
+        `${supabaseUrl}/rest/v1/videos?youtube_id=eq.${youtube_id}`,
+        {
+          method: 'PATCH',
+          headers: {
+            apikey: supabaseKey,
+            Authorization: `Bearer ${supabaseKey}`,
+            'Content-Type': 'application/json',
+            Prefer: 'return=minimal',
+          },
+          body: JSON.stringify({
+            status: 'failed',
+            error_reason: 'video_not_found',
+          }),
+        }
+      );
       
       return new Response(
         JSON.stringify({ error: 'Video not found on YouTube', code: 'video_not_found' }),
@@ -137,13 +163,22 @@ serve(async (req) => {
     
     // Check if live stream
     if (ytVideo.snippet.liveBroadcastContent !== 'none') {
-      await supabase
-        .from('videos')
-        .update({ 
-          status: 'failed',
-          error_reason: 'live_stream_no_vod'
-        })
-        .eq('id', videoId);
+      await fetch(
+        `${supabaseUrl}/rest/v1/videos?youtube_id=eq.${youtube_id}`,
+        {
+          method: 'PATCH',
+          headers: {
+            apikey: supabaseKey,
+            Authorization: `Bearer ${supabaseKey}`,
+            'Content-Type': 'application/json',
+            Prefer: 'return=minimal',
+          },
+          body: JSON.stringify({
+            status: 'failed',
+            error_reason: 'live_stream_no_vod',
+          }),
+        }
+      );
       
       console.log(`Video ${video.youtube_id} is a live stream without VOD`);
       return new Response(
@@ -154,13 +189,22 @@ serve(async (req) => {
 
     // Check if duration is available
     if (!ytVideo.contentDetails?.duration) {
-      await supabase
-        .from('videos')
-        .update({ 
-          status: 'failed',
-          error_reason: 'no_duration'
-        })
-        .eq('id', videoId);
+      await fetch(
+        `${supabaseUrl}/rest/v1/videos?youtube_id=eq.${youtube_id}`,
+        {
+          method: 'PATCH',
+          headers: {
+            apikey: supabaseKey,
+            Authorization: `Bearer ${supabaseKey}`,
+            'Content-Type': 'application/json',
+            Prefer: 'return=minimal',
+          },
+          body: JSON.stringify({
+            status: 'failed',
+            error_reason: 'no_duration',
+          }),
+        }
+      );
       
       console.log(`Video ${video.youtube_id} has no duration (still processing)`);
       return new Response(
@@ -190,13 +234,22 @@ serve(async (req) => {
       );
     } catch (error) {
       console.error('AssemblyAI submission failed after retries:', error);
-      await supabase
-        .from('videos')
-        .update({ 
-          status: 'failed',
-          error_reason: 'assemblyai_submission_failed'
-        })
-        .eq('id', videoId);
+      await fetch(
+        `${supabaseUrl}/rest/v1/videos?youtube_id=eq.${youtube_id}`,
+        {
+          method: 'PATCH',
+          headers: {
+            apikey: supabaseKey,
+            Authorization: `Bearer ${supabaseKey}`,
+            'Content-Type': 'application/json',
+            Prefer: 'return=minimal',
+          },
+          body: JSON.stringify({
+            status: 'failed',
+            error_reason: 'assemblyai_submission_failed',
+          }),
+        }
+      );
       
       throw error;
     }
@@ -207,13 +260,22 @@ serve(async (req) => {
       
       // Check if it's an unreachable audio error (members-only, unlisted, etc.)
       if (errorText.includes('could not be reached') || errorText.includes('unreachable')) {
-        await supabase
-          .from('videos')
-          .update({ 
-            status: 'failed',
-            error_reason: 'unreachable_audio'
-          })
-          .eq('id', videoId);
+        await fetch(
+          `${supabaseUrl}/rest/v1/videos?youtube_id=eq.${youtube_id}`,
+          {
+            method: 'PATCH',
+            headers: {
+              apikey: supabaseKey,
+              Authorization: `Bearer ${supabaseKey}`,
+              'Content-Type': 'application/json',
+              Prefer: 'return=minimal',
+            },
+            body: JSON.stringify({
+              status: 'failed',
+              error_reason: 'unreachable_audio',
+            }),
+          }
+        );
         
         return new Response(
           JSON.stringify({ 
@@ -231,15 +293,24 @@ serve(async (req) => {
     console.log(`AssemblyAI transcript ID: ${transcriptId}`);
 
     // Update video with transcript_id and set to processing
-    await supabase
-      .from('videos')
-      .update({ 
-        status: 'processing',
-        transcript_id: transcriptId,
-        processing_started_at: new Date().toISOString(),
-        error_reason: null
-      })
-      .eq('id', videoId);
+    await fetch(
+      `${supabaseUrl}/rest/v1/videos?youtube_id=eq.${youtube_id}`,
+      {
+        method: 'PATCH',
+        headers: {
+          apikey: supabaseKey,
+          Authorization: `Bearer ${supabaseKey}`,
+          'Content-Type': 'application/json',
+          Prefer: 'return=minimal',
+        },
+        body: JSON.stringify({
+          status: 'processing',
+          transcript_id: transcriptId,
+          processing_started_at: new Date().toISOString(),
+          error_reason: null,
+        }),
+      }
+    );
 
     console.log(`✓ Transcription submitted successfully for: ${video.title}`);
 
@@ -247,7 +318,7 @@ serve(async (req) => {
       JSON.stringify({ 
         success: true, 
         message: 'Transcription submitted',
-        videoId,
+        youtube_id,
         transcriptId,
         status: 'processing'
       }),

@@ -159,7 +159,7 @@ export const AdminPanel = () => {
       // Get all pending videos
       const { data: videos, error: videosError } = await supabase
         .from('videos')
-        .select('id')
+        .select('id, youtube_id')
         .eq('status', 'pending')
         .limit(100); // Process up to 100 at a time
 
@@ -195,7 +195,7 @@ export const AdminPanel = () => {
         await Promise.all(
           batch.map(video => 
             supabase.functions.invoke('start-transcription', {
-              body: { videoId: video.id },
+              body: { youtube_id: video.youtube_id },
               headers: { Authorization: `Bearer ${session?.access_token}` }
             })
           )
@@ -281,7 +281,7 @@ export const AdminPanel = () => {
       // Get ALL pending videos (no limit)
       const { data: videos, error: videosError } = await supabase
         .from('videos')
-        .select('id, title')
+        .select('id, title, youtube_id')
         .eq('status', 'pending');
 
       if (videosError) throw videosError;
@@ -303,7 +303,7 @@ export const AdminPanel = () => {
       // Trigger transcription for all videos (they run in background)
       const promises = videos.map(video => 
         supabase.functions.invoke('start-transcription', {
-          body: { videoId: video.id },
+          body: { youtube_id: video.youtube_id },
           headers: { Authorization: `Bearer ${session?.access_token}` }
         })
       );
@@ -373,7 +373,7 @@ export const AdminPanel = () => {
       // Fetch all failed videos
       const { data: failedVideos, error: fetchError } = await supabase
         .from('videos')
-        .select('id, title')
+        .select('id, title, youtube_id')
         .eq('status', 'failed')
         .order('created_at', { ascending: false });
 
@@ -411,7 +411,7 @@ export const AdminPanel = () => {
         
         const promises = batch.map(video =>
           supabase.functions.invoke('start-transcription', {
-            body: { videoId: video.id },
+            body: { youtube_id: video.youtube_id },
             headers: { Authorization: `Bearer ${session?.access_token}` }
           })
         );
