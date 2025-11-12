@@ -230,17 +230,57 @@ serve(async (req) => {
       
       const info = await yt.getInfo(youtube_id);
       
-      // Get the best audio format (opus or mp4 audio)
-      const audioFormat = info.streaming_data?.adaptive_formats?.find(
-        (fmt: any) => fmt.has_audio && !fmt.has_video
-      );
+      console.log(`Retrieved video info, checking formats...`);
       
-      if (!audioFormat?.url) {
-        throw new Error('No audio stream found in video');
+      // Try to get streaming data - youtubei.js provides a streaming_data property
+      const formats = info.streaming_data?.formats || [];
+      const adaptiveFormats = info.streaming_data?.adaptive_formats || [];
+      const allFormats = [...formats, ...adaptiveFormats];
+      
+      console.log(`Found ${allFormats.length} total formats`);
+      
+      // Filter for audio-only formats
+      const audioFormats = allFormats.filter((fmt: any) => {
+        // Check if it's audio only (no video)
+        const isAudioOnly = fmt.has_audio && !fmt.has_video;
+        const mimeType = fmt.mime_type || '';
+        return isAudioOnly || mimeType.startsWith('audio/');
+      });
+      
+      console.log(`Found ${audioFormats.length} audio-only formats`);
+      
+      if (audioFormats.length === 0) {
+        // Fallback: try to use any format with audio
+        const anyAudioFormat = allFormats.find((fmt: any) => fmt.has_audio);
+        if (anyAudioFormat?.url) {
+          audioUrl = anyAudioFormat.url;
+          console.log(`Using fallback format with audio: ${anyAudioFormat.mime_type}`);
+        } else {
+          console.error('Available formats:', JSON.stringify(allFormats.map((f: any) => ({
+            mime_type: f.mime_type,
+            has_audio: f.has_audio,
+            has_video: f.has_video,
+            url_present: !!f.url
+          }))));
+          throw new Error('No audio stream found in video');
+        }
+      } else {
+        // Prefer opus or webm audio, then mp4
+        const bestAudio = audioFormats.find((fmt: any) => 
+          fmt.mime_type?.includes('opus')
+        ) || audioFormats.find((fmt: any) => 
+          fmt.mime_type?.includes('webm')
+        ) || audioFormats.find((fmt: any) => 
+          fmt.mime_type?.includes('mp4')
+        ) || audioFormats[0];
+        
+        if (!bestAudio?.url) {
+          throw new Error('Selected audio format has no URL');
+        }
+        
+        audioUrl = bestAudio.url;
+        console.log(`Extracted audio stream URL (format: ${bestAudio.mime_type})`);
       }
-      
-      audioUrl = audioFormat.url;
-      console.log(`Extracted audio stream URL (format: ${audioFormat.mime_type})`);
       
     } catch (error) {
       console.error('Failed to extract audio stream:', error);
