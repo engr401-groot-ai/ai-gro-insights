@@ -1,7 +1,8 @@
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { Innertube } from "https://esm.sh/youtubei.js@10.5.0/web.bundle.min.js";
+import Innertube, { UniversalCache } from "https://esm.sh/youtubei.js@10.5.0";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -42,6 +43,25 @@ async function fetchWithRetry(
   }
   
   throw lastError || new Error('Max retries exceeded');
+}
+
+// Pick the best audio-only stream
+async function resolveAudioUrl(youtube_id: string): Promise<string> {
+  const yt = await Innertube.create({ cache: new UniversalCache() });
+  const info = await yt.getInfo(youtube_id);
+
+  // Prefer audio-only adaptive formats (mp4/aac or webm/opus)
+  const fmts = info.streaming_data?.adaptive_formats ?? [];
+  const audioOnly = fmts
+    .filter((f: any) => (f.mime_type ?? "").startsWith("audio/") && !!f.url)
+    // sort by approx bitrate descending
+    .sort((a: any, b: any) => (b.bitrate ?? 0) - (a.bitrate ?? 0));
+
+  if (audioOnly.length === 0) {
+    throw new Error("No direct audio URL found (format blocked or ciphered).");
+  }
+  // Most URLs have an `expire=` param; AssemblyAI should fetch quickly after submit.
+  return audioOnly[0].url!;
 }
 
 serve(async (req) => {
@@ -217,40 +237,15 @@ serve(async (req) => {
       );
     }
 
-    console.log(`Video passed validation (duration: ${ytVideo.contentDetails.duration}). Extracting audio stream...`);
+    console.log(`Video passed validation (duration: ${ytVideo.contentDetails.duration}). Extracting direct audio stream...`);
 
-    // Extract direct audio stream URL using youtubei.js
+    // Resolve direct audio URL using youtubei.js
     let audioUrl: string;
     try {
-      const yt = await Innertube.create({
-        lang: 'en',
-        location: 'US',
-      });
-      
-      const info = await yt.getInfo(youtube_id);
-      
-      console.log(`Retrieved video info, attempting to get download URL...`);
-      
-      // Use the download method which handles format selection and URL extraction
-      const format = info.chooseFormat({ 
-        type: 'audio',
-        quality: 'best'
-      });
-      
-      if (!format) {
-        console.error('No audio format available from chooseFormat');
-        throw new Error('No audio format found');
-      }
-      
-      console.log(`Selected format: ${format.mime_type}, itag: ${format.itag}`);
-      
-      // Get the decipher if needed
-      audioUrl = format.decipher(yt.session.player);
-      
-      console.log(`Successfully extracted audio URL (length: ${audioUrl.length} chars)`);
-      
+      audioUrl = await resolveAudioUrl(youtube_id);
+      console.log(`Successfully resolved direct audio URL (length: ${audioUrl.length} chars)`);
     } catch (error) {
-      console.error('Failed to extract audio stream:', error);
+      console.error('Failed to resolve audio URL:', error);
       await fetch(
         `${supabaseUrl}/rest/v1/videos?youtube_id=eq.${youtube_id}`,
         {
