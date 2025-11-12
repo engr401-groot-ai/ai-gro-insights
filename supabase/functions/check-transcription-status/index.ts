@@ -214,13 +214,18 @@ serve(async (req) => {
             await supabase.from('transcript_segments').insert(batch);
           }
 
-          // Export JSONL to storage
+          // Export JSONL to storage with video_url and storage_path
+          const storagePath = `transcripts/normalized/${video.youtube_id}.jsonl`;
+          const videoUrl = `https://www.youtube.com/watch?v=${video.youtube_id}`;
+          
           const jsonlLines = segmentsData.map(seg => 
             JSON.stringify({
               video_id: video.youtube_id,
               start: seg.start_time,
               end: seg.end_time,
-              text: seg.segment_text
+              text: seg.segment_text,
+              video_url: videoUrl,
+              storage_path: storagePath
             })
           ).join('\n');
 
@@ -228,7 +233,7 @@ serve(async (req) => {
           
           await supabase.storage
             .from('transcripts')
-            .upload(`normalized/${video.youtube_id}.jsonl`, jsonlBlob, {
+            .upload(storagePath, jsonlBlob, {
               contentType: 'application/json',
               upsert: true
             });
