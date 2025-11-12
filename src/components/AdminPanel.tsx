@@ -192,7 +192,7 @@ export const AdminPanel = () => {
         // Process all videos in this batch concurrently
         await Promise.all(
           batch.map(video => 
-            supabase.functions.invoke('transcribe-video', {
+            supabase.functions.invoke('start-transcription', {
               body: { videoId: video.id },
               headers: { Authorization: `Bearer ${session?.access_token}` }
             })
@@ -300,7 +300,7 @@ export const AdminPanel = () => {
 
       // Trigger transcription for all videos (they run in background)
       const promises = videos.map(video => 
-        supabase.functions.invoke('transcribe-video', {
+        supabase.functions.invoke('start-transcription', {
           body: { videoId: video.id },
           headers: { Authorization: `Bearer ${session?.access_token}` }
         })
@@ -408,7 +408,7 @@ export const AdminPanel = () => {
         const batch = failedVideos.slice(i, i + BATCH_SIZE);
         
         const promises = batch.map(video =>
-          supabase.functions.invoke('transcribe-video', {
+          supabase.functions.invoke('start-transcription', {
             body: { videoId: video.id },
             headers: { Authorization: `Bearer ${session?.access_token}` }
           })

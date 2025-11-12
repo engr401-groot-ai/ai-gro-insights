@@ -255,11 +255,15 @@ export type Database = {
           created_at: string | null
           description: string | null
           duration: number | null
+          error_reason: string | null
           id: string
+          processing_completed_at: string | null
+          processing_started_at: string | null
           published_at: string
           status: string | null
           thumbnail_url: string | null
           title: string
+          transcript_id: string | null
           updated_at: string | null
           url: string
           youtube_id: string
@@ -269,11 +273,15 @@ export type Database = {
           created_at?: string | null
           description?: string | null
           duration?: number | null
+          error_reason?: string | null
           id?: string
+          processing_completed_at?: string | null
+          processing_started_at?: string | null
           published_at: string
           status?: string | null
           thumbnail_url?: string | null
           title: string
+          transcript_id?: string | null
           updated_at?: string | null
           url: string
           youtube_id: string
@@ -283,11 +291,15 @@ export type Database = {
           created_at?: string | null
           description?: string | null
           duration?: number | null
+          error_reason?: string | null
           id?: string
+          processing_completed_at?: string | null
+          processing_started_at?: string | null
           published_at?: string
           status?: string | null
           thumbnail_url?: string | null
           title?: string
+          transcript_id?: string | null
           updated_at?: string | null
           url?: string
           youtube_id?: string

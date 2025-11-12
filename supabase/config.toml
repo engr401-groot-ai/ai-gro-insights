@@ -6,6 +6,12 @@ verify_jwt = true
 [functions.transcribe-video]
 verify_jwt = true
 
+[functions.start-transcription]
+verify_jwt = true
+
+[functions.check-transcription-status]
+verify_jwt = false
+
 [functions.generate-embeddings]
 verify_jwt = true
 
