@@ -172,7 +172,7 @@ ${context}`
       body: JSON.stringify({
         model: 'gpt-4o-mini',
         messages,
-        temperature: 0.7,
+        temperature: 0,
         max_tokens: 800,
       }),
     });
