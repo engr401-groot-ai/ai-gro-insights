@@ -1,8 +1,15 @@
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ExternalLink, Calendar, Video } from "lucide-react";
+import { ExternalLink, Calendar, Video, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TranscriptDownload } from "./TranscriptDownload";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import { useToast } from "@/hooks/use-toast";
 
 interface VideoCardProps {
   id: string;
@@ -23,14 +30,26 @@ export const VideoCard = ({
   status,
   relevanceScore 
 }: VideoCardProps) => {
+  const { toast } = useToast();
+  
   const statusColors = {
     processed: "bg-accent/20 text-accent border-accent/30",
     processing: "bg-primary/20 text-primary border-primary/30",
     pending: "bg-muted text-muted-foreground border-border",
   };
 
+  const copyUrlToClipboard = () => {
+    navigator.clipboard.writeText(url);
+    toast({
+      title: "Link Copied",
+      description: "YouTube URL copied to clipboard",
+    });
+  };
+
   return (
-    <Card className="p-5 bg-gradient-card shadow-md hover:shadow-lg transition-all border-border group">
+    <ContextMenu>
+      <ContextMenuTrigger>
+        <Card className="p-5 bg-gradient-card shadow-md hover:shadow-lg transition-all border-border group">
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1 space-y-3">
           <div className="flex items-start gap-3">
@@ -72,9 +91,7 @@ export const VideoCard = ({
               e.preventDefault();
               const opened = window.open(url, '_blank', 'noopener,noreferrer');
               if (!opened) {
-                // Fallback: copy to clipboard if popup blocked
-                navigator.clipboard.writeText(url);
-                alert('YouTube link copied to clipboard (popup blocked)');
+                copyUrlToClipboard();
               }
             }}
           >
@@ -86,5 +103,17 @@ export const VideoCard = ({
         </div>
       </div>
     </Card>
+      </ContextMenuTrigger>
+      <ContextMenuContent>
+        <ContextMenuItem onClick={copyUrlToClipboard}>
+          <Copy className="h-4 w-4 mr-2" />
+          Copy YouTube URL
+        </ContextMenuItem>
+        <ContextMenuItem onClick={() => window.open(url, '_blank', 'noopener,noreferrer')}>
+          <ExternalLink className="h-4 w-4 mr-2" />
+          Open in New Tab
+        </ContextMenuItem>
+      </ContextMenuContent>
+    </ContextMenu>
   );
 };
