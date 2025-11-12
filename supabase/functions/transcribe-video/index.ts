@@ -84,33 +84,10 @@ serve(async (req) => {
         console.log(`YouTube URL: ${video.url}`);
 
         // AssemblyAI requires a publicly accessible audio URL
-        // We'll use yt-dlp API alternative via a third-party service
-        console.log("Getting audio stream URL...");
+        // We'll use the video URL directly since AssemblyAI can handle YouTube URLs
+        console.log("Using YouTube URL directly with AssemblyAI...");
         
-        // Use youtube-dl API to get direct audio URL
-        const ytApiResponse = await fetch(`https://api.cobalt.tools/api/json`, {
-          method: 'POST',
-          headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            url: video.url,
-            isAudioOnly: true,
-            aFormat: 'mp3',
-          }),
-        });
-
-        if (!ytApiResponse.ok) {
-          throw new Error('Failed to get audio URL from YouTube');
-        }
-
-        const ytData = await ytApiResponse.json();
-        const audioUrl = ytData.url;
-        
-        if (!audioUrl) {
-          throw new Error('No audio URL received from API');
-        }
+        const audioUrl = video.url;
 
         console.log("Got audio URL, submitting to AssemblyAI...");
 
