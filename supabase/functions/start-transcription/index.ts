@@ -1,6 +1,7 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { Innertube } from "https://esm.sh/youtubei.js@10.5.0/web.bundle.min.js";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -121,9 +122,6 @@ serve(async (req) => {
 
     const video = videos[0];
 
-    // Build canonical YouTube URL (avoid extra params that trigger consent pages)
-    const youtubeUrl = `https://www.youtube.com/watch?v=${youtube_id}`;
-
     // GATE 1: Check if video is live or still processing using YouTube API
     console.log(`Checking video status for YouTube ID: ${youtube_id}`);
     
@@ -219,7 +217,54 @@ serve(async (req) => {
       );
     }
 
-    console.log(`Video passed validation (duration: ${ytVideo.contentDetails.duration}). Submitting to AssemblyAI...`);
+    console.log(`Video passed validation (duration: ${ytVideo.contentDetails.duration}). Extracting audio stream...`);
+
+    // Extract direct audio stream URL using youtubei.js
+    let audioUrl: string;
+    try {
+      const yt = await Innertube.create({
+        lang: 'en',
+        location: 'US',
+        retrieve_player: false,
+      });
+      
+      const info = await yt.getInfo(youtube_id);
+      
+      // Get the best audio format (opus or mp4 audio)
+      const audioFormat = info.streaming_data?.adaptive_formats?.find(
+        (fmt: any) => fmt.has_audio && !fmt.has_video
+      );
+      
+      if (!audioFormat?.url) {
+        throw new Error('No audio stream found in video');
+      }
+      
+      audioUrl = audioFormat.url;
+      console.log(`Extracted audio stream URL (format: ${audioFormat.mime_type})`);
+      
+    } catch (error) {
+      console.error('Failed to extract audio stream:', error);
+      await fetch(
+        `${supabaseUrl}/rest/v1/videos?youtube_id=eq.${youtube_id}`,
+        {
+          method: 'PATCH',
+          headers: {
+            apikey: supabaseKey,
+            Authorization: `Bearer ${supabaseKey}`,
+            'Content-Type': 'application/json',
+            Prefer: 'return=minimal',
+          },
+          body: JSON.stringify({
+            status: 'failed',
+            error_reason: 'audio_extraction_failed',
+          }),
+        }
+      );
+      
+      throw new Error(`Audio extraction failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+
+    console.log(`Submitting direct audio stream to AssemblyAI...`);
 
     // GATE 2: Submit to AssemblyAI with retry logic
     let submitResponse;
@@ -233,7 +278,7 @@ serve(async (req) => {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            audio_url: youtubeUrl,
+            audio_url: audioUrl,
             language_code: 'en',
           }),
         }
