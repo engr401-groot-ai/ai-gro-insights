@@ -1,7 +1,6 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import ytdl from "npm:@distube/ytdl-core@^4.15.8";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -84,25 +83,9 @@ serve(async (req) => {
         console.log(`Processing: ${video.title}`);
         console.log(`YouTube URL: ${video.url}`);
 
-        // Get audio stream URL from YouTube
-        console.log("Extracting audio URL from YouTube...");
-        
-        const videoInfo = await ytdl.getInfo(video.url);
-        const audioFormats = ytdl.filterFormats(videoInfo.formats, 'audioonly');
-        
-        if (!audioFormats || audioFormats.length === 0) {
-          throw new Error('No audio formats found for this video');
-        }
-        
-        // Get the best audio format
-        const audioFormat = audioFormats[0];
-        const audioUrl = audioFormat.url;
-        
-        if (!audioUrl) {
-          throw new Error('Failed to extract audio URL');
-        }
-        
-        console.log("Audio URL extracted successfully");
+        // AssemblyAI accepts YouTube URLs directly
+        console.log("Submitting YouTube URL to AssemblyAI...");
+        const audioUrl = video.url;
 
         console.log("Got audio URL, submitting to AssemblyAI...");
 
