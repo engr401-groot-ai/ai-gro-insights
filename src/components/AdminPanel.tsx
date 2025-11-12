@@ -363,7 +363,7 @@ export const AdminPanel = () => {
               </div>
               <div className="flex-1">
                 <p className="text-sm font-medium text-foreground">Transcribe Videos</p>
-                <p className="text-xs text-muted-foreground">Convert audio to text using OpenAI Whisper (real transcription when yt-dlp available)</p>
+                <p className="text-xs text-muted-foreground">Convert audio to text using AssemblyAI (accepts YouTube URLs directly)</p>
               </div>
               <Button
                 onClick={transcribeVideos}
@@ -511,7 +511,7 @@ export const AdminPanel = () => {
               <CheckCircle2 className="h-4 w-4 mt-0.5 flex-shrink-0" />
               <p>
                 System automatically fetches, transcribes, and indexes videos every 6 hours (12am, 6am, 12pm, 6pm).
-                Transcription uses real YouTube audio via yt-dlp + OpenAI Whisper for accurate processing.
+                Transcription uses AssemblyAI which accepts YouTube URLs directly for accurate, unlimited-length processing.
               </p>
             </div>
           </div>
