@@ -7,7 +7,7 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const ASSEMBLYAI_API_URL = 'https://api.assemblyai.com/v2';
+const OPENAI_API_URL = 'https://api.openai.com/v1/audio/transcriptions';
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -28,7 +28,7 @@ serve(async (req) => {
     
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const assemblyaiApiKey = Deno.env.get('ASSEMBLYAI_API_KEY')!;
+    const openaiApiKey = Deno.env.get('OPENAI_API_KEY')!;
     
     const supabase = createClient(supabaseUrl, supabaseKey, {
       global: { headers: { Authorization: authHeader } }
@@ -83,68 +83,53 @@ serve(async (req) => {
         console.log(`Processing: ${video.title}`);
         console.log(`YouTube URL: ${video.url}`);
 
-        // AssemblyAI accepts YouTube URLs directly
-        console.log("Submitting YouTube URL to AssemblyAI...");
-        const audioUrl = video.url;
-
-        console.log("Got audio URL, submitting to AssemblyAI...");
-
-        // Step 1: Submit audio URL to AssemblyAI
-        const submitResponse = await fetch(`${ASSEMBLYAI_API_URL}/transcript`, {
-          method: 'POST',
-          headers: {
-            'Authorization': assemblyaiApiKey,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            audio_url: audioUrl,
-            language_code: 'en',
-          }),
+        // Step 1: Download audio using yt-dlp
+        console.log("Downloading audio from YouTube...");
+        
+        const ytDlpProcess = new Deno.Command("yt-dlp", {
+          args: [
+            "-f", "bestaudio",
+            "--extract-audio",
+            "--audio-format", "mp3",
+            "--output", "-",
+            video.url
+          ],
+          stdout: "piped",
+          stderr: "piped"
         });
 
-        if (!submitResponse.ok) {
-          const errorText = await submitResponse.text();
-          throw new Error(`AssemblyAI submission error: ${errorText}`);
+        const { stdout, stderr, success } = await ytDlpProcess.output();
+        
+        if (!success) {
+          const errorText = new TextDecoder().decode(stderr);
+          throw new Error(`Failed to download audio: ${errorText}`);
         }
 
-        const { id: transcriptId } = await submitResponse.json();
-        console.log(`AssemblyAI transcript ID: ${transcriptId}`);
+        console.log("Audio downloaded, submitting to OpenAI Whisper...");
 
-        // Step 2: Poll for completion
-        console.log("Waiting for transcription to complete...");
-        let transcriptionData: any = null;
-        let pollAttempts = 0;
-        const maxPollAttempts = 180; // 30 minutes max (10-second intervals)
+        // Step 2: Submit to OpenAI Whisper API
+        const formData = new FormData();
+        const audioBlob = new Blob([stdout], { type: 'audio/mpeg' });
+        formData.append('file', audioBlob, 'audio.mp3');
+        formData.append('model', 'whisper-1');
+        formData.append('response_format', 'verbose_json');
+        formData.append('timestamp_granularities[]', 'segment');
 
-        while (pollAttempts < maxPollAttempts) {
-          await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds
-          
-          const statusResponse = await fetch(`${ASSEMBLYAI_API_URL}/transcript/${transcriptId}`, {
-            headers: {
-              'Authorization': assemblyaiApiKey,
-            },
-          });
+        const transcribeResponse = await fetch(OPENAI_API_URL, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${openaiApiKey}`,
+          },
+          body: formData,
+        });
 
-          if (!statusResponse.ok) {
-            throw new Error('Failed to check transcription status');
-          }
-
-          transcriptionData = await statusResponse.json();
-          console.log(`Transcription status: ${transcriptionData.status}`);
-
-          if (transcriptionData.status === 'completed') {
-            console.log("✓ Transcription completed!");
-            break;
-          } else if (transcriptionData.status === 'error') {
-            throw new Error(`AssemblyAI transcription failed: ${transcriptionData.error}`);
-          }
-
-          pollAttempts++;
+        if (!transcribeResponse.ok) {
+          const errorText = await transcribeResponse.text();
+          throw new Error(`OpenAI Whisper error: ${errorText}`);
         }
 
-        if (!transcriptionData || transcriptionData.status !== 'completed') {
-          throw new Error('Transcription timed out');
-        }
+        const transcriptionData = await transcribeResponse.json();
+        console.log("✓ Transcription completed!");
 
         const transcriptionText = transcriptionData.text;
 
@@ -169,46 +154,17 @@ serve(async (req) => {
           throw transcriptionError;
         }
 
-        // Step 3: Process timestamped segments from AssemblyAI
-        // Get sentences with timestamps (if available)
-        const words = transcriptionData.words || [];
-        console.log(`Processing ${words.length} words with timestamps...`);
-        
-        // Group words into segments of ~500 characters
-        const segments: Array<{ text: string; start: number; end: number }> = [];
-        let currentSegment = { text: '', start: 0, end: 0 };
-        
-        for (const word of words) {
-          if (!currentSegment.start) {
-            currentSegment.start = word.start;
-          }
-          
-          const wordText = word.text + ' ';
-          
-          if (currentSegment.text.length + wordText.length > 500 && currentSegment.text.length > 0) {
-            currentSegment.end = word.end;
-            segments.push({ ...currentSegment });
-            currentSegment = { text: wordText, start: word.start, end: word.end };
-          } else {
-            currentSegment.text += wordText;
-            currentSegment.end = word.end;
-          }
-        }
-        
-        // Add the last segment
-        if (currentSegment.text.trim()) {
-          segments.push(currentSegment);
-        }
-
-        console.log(`Created ${segments.length} transcript segments with timestamps`);
+        // Step 3: Process timestamped segments from OpenAI Whisper
+        const segments = transcriptionData.segments || [];
+        console.log(`Processing ${segments.length} segments with timestamps...`);
         
         // Prepare segments for database insertion
-        const segmentsData = segments.map(segment => ({
+        const segmentsData = segments.map((segment: any) => ({
           transcription_id: transcription.id,
           video_id: videoId,
           segment_text: segment.text.trim(),
-          start_time: Math.floor(segment.start / 1000), // Convert ms to seconds
-          end_time: Math.floor(segment.end / 1000),
+          start_time: Math.floor(segment.start), // Already in seconds
+          end_time: Math.floor(segment.end),
         }));
 
         // Insert in batches of 50 to avoid overwhelming the database
