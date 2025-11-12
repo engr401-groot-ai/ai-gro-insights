@@ -1,4 +1,3 @@
-import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -47,7 +46,7 @@ async function fetchWithRetry(
 
 // Pick the best audio-only stream
 async function resolveAudioUrl(youtube_id: string): Promise<string> {
-  const yt = await Innertube.create({ cache: new UniversalCache() });
+  const yt = await Innertube.create({ cache: new UniversalCache(false) });
   const info = await yt.getInfo(youtube_id);
 
   // Prefer audio-only adaptive formats (mp4/aac or webm/opus)
