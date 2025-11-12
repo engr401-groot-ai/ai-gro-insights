@@ -2,6 +2,7 @@ import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { Innertube } from "https://esm.sh/youtubei.js@10.5.0/web.bundle.min.js";
+import { YoutubeTranscript } from "https://esm.sh/youtube-transcript@1.2.1";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -97,6 +98,42 @@ async function resolveAudioUrl(youtube_id: string): Promise<string> {
   }
 
   throw new Error("No direct audio URL found (format blocked or ciphered).");
+}
+
+/** Fetch official YouTube captions/transcript */
+async function fetchOfficialTranscript(youtube_id: string) {
+  console.log(`[fetchOfficialTranscript] Attempting to fetch captions for ${youtube_id}`);
+  const items = await YoutubeTranscript.fetchTranscript(youtube_id);
+  if (!items || items.length === 0) {
+    throw new Error("no_official_captions");
+  }
+  console.log(`[fetchOfficialTranscript] Found ${items.length} caption items`);
+  return items;
+}
+
+/** Convert caption items into ~30s segments with 5s overlap */
+function segmentCaptions30s(items: { text: string; duration: number; offset: number }[]) {
+  const SEG = 30, OVERLAP = 5;
+  const out: { start: number; end: number; text: string }[] = [];
+  if (!items.length) return out;
+
+  let t = Math.floor(items[0].offset);
+  const endAll = Math.floor(items[items.length - 1].offset + items[items.length - 1].duration);
+
+  while (t < endAll) {
+    const winStart = t;
+    const winEnd = Math.min(t + SEG, endAll);
+    const chunkText = items
+      .filter(it => it.offset < winEnd && (it.offset + it.duration) > winStart)
+      .map(it => it.text)
+      .join(" ")
+      .trim();
+
+    if (chunkText) out.push({ start: winStart, end: winEnd, text: chunkText });
+    t += (SEG - OVERLAP);
+  }
+  console.log(`[segmentCaptions30s] Created ${out.length} segments from captions`);
+  return out;
 }
 
 serve(async (req) => {
@@ -272,33 +309,166 @@ serve(async (req) => {
       );
     }
 
-    console.log(`Video passed validation (duration: ${ytVideo.contentDetails.duration}). Extracting direct audio stream...`);
+    console.log(`Video passed validation (duration: ${ytVideo.contentDetails.duration}). Attempting audio extraction...`);
 
-    // Resolve direct audio URL using youtubei.js
-    let audioUrl: string;
+    let audioUrl: string | null = null;
+    
+    // Try to extract direct audio stream URL
     try {
       audioUrl = await resolveAudioUrl(youtube_id);
-      console.log(`Successfully resolved direct audio URL (length: ${audioUrl.length} chars)`);
-    } catch (error) {
-      console.error('Failed to resolve audio URL:', error);
-      await fetch(
-        `${supabaseUrl}/rest/v1/videos?youtube_id=eq.${youtube_id}`,
-        {
-          method: 'PATCH',
-          headers: {
-            apikey: supabaseKey,
-            Authorization: `Bearer ${supabaseKey}`,
-            'Content-Type': 'application/json',
-            Prefer: 'return=minimal',
-          },
-          body: JSON.stringify({
-            status: 'failed',
-            error_reason: 'audio_extraction_failed',
-          }),
-        }
-      );
+      console.log(`Successfully resolved audio URL: ${audioUrl.substring(0, 80)}...`);
+    } catch (audioErr) {
+      const errorMsg = audioErr instanceof Error ? audioErr.message : String(audioErr);
+      console.error(`Audio extraction failed: ${errorMsg}. Trying caption fallback...`);
       
-      throw new Error(`Audio extraction failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      // Fallback to official captions
+      try {
+        const caps = await fetchOfficialTranscript(youtube_id);
+        const segments = segmentCaptions30s(
+          caps.map((c: any) => ({ text: c.text, duration: c.duration, offset: c.offset }))
+        );
+
+        if (!segments.length) {
+          throw new Error("No segments created from captions");
+        }
+
+        console.log(`Using caption fallback: ${segments.length} segments created`);
+        
+        // Build full transcript text
+        const fullText = segments.map(s => s.text).join(" ");
+
+        // Update video status to processing
+        await fetch(
+          `${supabaseUrl}/rest/v1/videos?youtube_id=eq.${youtube_id}`,
+          {
+            method: 'PATCH',
+            headers: {
+              apikey: supabaseKey,
+              Authorization: `Bearer ${supabaseKey}`,
+              'Content-Type': 'application/json',
+              Prefer: 'return=minimal',
+            },
+            body: JSON.stringify({ status: 'processing' }),
+          }
+        );
+
+        // Insert full transcription
+        const transRes = await fetch(
+          `${supabaseUrl}/rest/v1/transcriptions`,
+          {
+            method: 'POST',
+            headers: {
+              apikey: supabaseKey,
+              Authorization: `Bearer ${supabaseKey}`,
+              'Content-Type': 'application/json',
+              Prefer: 'return=representation',
+            },
+            body: JSON.stringify({
+              video_id: video.id,
+              full_text: fullText,
+            }),
+          }
+        );
+
+        const transcriptionData = await transRes.json();
+        const transcriptionId = Array.isArray(transcriptionData) ? transcriptionData[0].id : transcriptionData.id;
+
+        // Insert segments
+        const segmentRows = segments.map((seg) => ({
+          video_id: video.id,
+          segment_text: seg.text,
+          start_time: seg.start,
+          end_time: seg.end,
+        }));
+
+        await fetch(
+          `${supabaseUrl}/rest/v1/transcript_segments`,
+          {
+            method: 'POST',
+            headers: {
+              apikey: supabaseKey,
+              Authorization: `Bearer ${supabaseKey}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(segmentRows),
+          }
+        );
+
+        // Mark as completed
+        await fetch(
+          `${supabaseUrl}/rest/v1/videos?youtube_id=eq.${youtube_id}`,
+          {
+            method: 'PATCH',
+            headers: {
+              apikey: supabaseKey,
+              Authorization: `Bearer ${supabaseKey}`,
+              'Content-Type': 'application/json',
+              Prefer: 'return=minimal',
+            },
+            body: JSON.stringify({ 
+              status: 'completed',
+              transcript_id: transcriptionId 
+            }),
+          }
+        );
+
+        // Trigger embeddings generation
+        try {
+          await supabase.functions.invoke("batch-generate-embeddings", {
+            body: { youtube_id },
+          });
+        } catch (embedErr) {
+          console.error("Failed to trigger embeddings:", embedErr);
+        }
+
+        return new Response(
+          JSON.stringify({ 
+            message: "Transcription completed using caption fallback",
+            youtube_id,
+            segments_count: segments.length,
+            method: "captions"
+          }),
+          { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+
+      } catch (capErr) {
+        const capErrorMsg = capErr instanceof Error ? capErr.message : String(capErr);
+        console.error(`Caption fallback also failed: ${capErrorMsg}`);
+        
+        // Neither audio nor captions available
+        await fetch(
+          `${supabaseUrl}/rest/v1/videos?youtube_id=eq.${youtube_id}`,
+          {
+            method: 'PATCH',
+            headers: {
+              apikey: supabaseKey,
+              Authorization: `Bearer ${supabaseKey}`,
+              'Content-Type': 'application/json',
+              Prefer: 'return=minimal',
+            },
+            body: JSON.stringify({ 
+              status: 'failed',
+              failure_reason: 'no_audio_or_captions'
+            }),
+          }
+        );
+
+        return new Response(
+          JSON.stringify({ 
+            error: "No audio stream and no official captions available",
+            youtube_id 
+          }),
+          { status: 422, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+    
+    // Continue with AssemblyAI if we have audio URL
+    if (!audioUrl) {
+      return new Response(
+        JSON.stringify({ error: "Unexpected: no audio URL after resolution" }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
 
     console.log(`Submitting direct audio stream to AssemblyAI...`);
