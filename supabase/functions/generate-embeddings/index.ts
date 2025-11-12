@@ -48,24 +48,30 @@ serve(async (req) => {
       return new Response("Unauthorized", { status: 401 });
     }
 
-    const { youtube_id, limit = 500 } = await req.json();
+    const { youtube_id, videoId, limit = 500 } = await req.json();
 
-    if (!youtube_id) {
-      return new Response("Missing youtube_id", { status: 400 });
-    }
+    let video_id: string;
 
-    console.log(`Generating embeddings for youtube_id: ${youtube_id}`);
-
-    // 1) Get video_id from youtube_id
-    const videoRes = await sb(`/videos?select=id&youtube_id=eq.${youtube_id}&limit=1`);
-    if (!videoRes.ok) {
-      throw new Error(`Failed to fetch video: ${videoRes.status} ${await videoRes.text()}`);
+    // Accept either youtube_id or videoId
+    if (videoId) {
+      video_id = videoId;
+      console.log(`Generating embeddings for video_id: ${video_id}`);
+    } else if (youtube_id) {
+      console.log(`Generating embeddings for youtube_id: ${youtube_id}`);
+      
+      // Get video_id from youtube_id
+      const videoRes = await sb(`/videos?select=id&youtube_id=eq.${youtube_id}&limit=1`);
+      if (!videoRes.ok) {
+        throw new Error(`Failed to fetch video: ${videoRes.status} ${await videoRes.text()}`);
+      }
+      const videos = await videoRes.json();
+      if (!Array.isArray(videos) || videos.length === 0) {
+        return new Response(`Video not found for youtube_id: ${youtube_id}`, { status: 404 });
+      }
+      video_id = videos[0].id;
+    } else {
+      return new Response("Missing youtube_id or videoId", { status: 400 });
     }
-    const videos = await videoRes.json();
-    if (!Array.isArray(videos) || videos.length === 0) {
-      return new Response(`Video not found for youtube_id: ${youtube_id}`, { status: 404 });
-    }
-    const video_id = videos[0].id;
 
     // 2) Pull unembedded segments for this video
     const sel = await sb(
@@ -79,9 +85,9 @@ serve(async (req) => {
     const segs = await sel.json();
     
     if (!Array.isArray(segs) || segs.length === 0) {
-      console.log(`No unembedded segments found for ${youtube_id}`);
+      console.log(`No unembedded segments found for video ${video_id}`);
       return new Response(
-        JSON.stringify({ ok: true, embedded: 0 }),
+        JSON.stringify({ ok: true, embedded: 0, processedCount: 0 }),
         { headers: { "Content-Type": "application/json" } }
       );
     }
@@ -124,7 +130,7 @@ serve(async (req) => {
     console.log(`✓ Total embeddings generated: ${total}`);
 
     return new Response(
-      JSON.stringify({ ok: true, embedded: total }),
+      JSON.stringify({ ok: true, embedded: total, processedCount: total }),
       { headers: { "Content-Type": "application/json" } }
     );
   } catch (e) {
