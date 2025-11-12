@@ -1,7 +1,7 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import Innertube, { UniversalCache } from "https://esm.sh/youtubei.js@10.5.0";
+import { Innertube } from "https://esm.sh/youtubei.js@10.5.0/web.bundle.min.js";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -46,7 +46,7 @@ async function fetchWithRetry(
 
 // Pick the best audio-only stream
 async function resolveAudioUrl(youtube_id: string): Promise<string> {
-  const yt = await Innertube.create({ cache: new UniversalCache(false) });
+  const yt = await Innertube.create();
   const info = await yt.getInfo(youtube_id);
 
   // Prefer audio-only adaptive formats (mp4/aac or webm/opus)
