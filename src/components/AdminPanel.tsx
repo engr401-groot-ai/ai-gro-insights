@@ -15,6 +15,7 @@ export const AdminPanel = () => {
   const [isGeneratingEmbeddings, setIsGeneratingEmbeddings] = useState(false);
   const [isBatchGenerating, setIsBatchGenerating] = useState(false);
   const [isProcessingAll, setIsProcessingAll] = useState(false);
+  const [isRetrying, setIsRetrying] = useState(false);
   const [transcriptionProgress, setTranscriptionProgress] = useState({
     total: 0,
     completed: 0,
@@ -369,6 +370,84 @@ export const AdminPanel = () => {
     }
   };
 
+  const retryFailedVideos = async () => {
+    setIsRetrying(true);
+    try {
+      // Fetch all failed videos
+      const { data: failedVideos, error: fetchError } = await supabase
+        .from('videos')
+        .select('id, title')
+        .eq('status', 'failed')
+        .order('created_at', { ascending: false });
+
+      if (fetchError) throw fetchError;
+
+      if (!failedVideos || failedVideos.length === 0) {
+        toast({
+          title: "No Failed Videos",
+          description: "There are no failed videos to retry",
+        });
+        return;
+      }
+
+      toast({
+        title: "Retry Started",
+        description: `Retrying ${failedVideos.length} failed videos...`,
+      });
+
+      // Reset their status to pending first
+      const { error: updateError } = await supabase
+        .from('videos')
+        .update({ status: 'pending' })
+        .eq('status', 'failed');
+
+      if (updateError) throw updateError;
+
+      const { data: { session } } = await supabase.auth.getSession();
+
+      // Process in batches of 5 with delay (respect AssemblyAI concurrency)
+      const BATCH_SIZE = 5;
+      const BATCH_DELAY_MS = 2000;
+      
+      for (let i = 0; i < failedVideos.length; i += BATCH_SIZE) {
+        const batch = failedVideos.slice(i, i + BATCH_SIZE);
+        
+        const promises = batch.map(video =>
+          supabase.functions.invoke('transcribe-video', {
+            body: { videoId: video.id },
+            headers: { Authorization: `Bearer ${session?.access_token}` }
+          })
+        );
+
+        await Promise.all(promises);
+
+        // Wait before next batch (except for last batch)
+        if (i + BATCH_SIZE < failedVideos.length) {
+          await new Promise(resolve => setTimeout(resolve, BATCH_DELAY_MS));
+        }
+      }
+
+      toast({
+        title: "Retry Complete",
+        description: `${failedVideos.length} videos queued for retry. Check progress above.`,
+      });
+
+      // Reload after a short delay
+      setTimeout(() => {
+        window.location.reload();
+      }, 2000);
+    } catch (error: any) {
+      console.error('Error retrying failed videos:', error);
+      toast({
+        title: "Error",
+        description: error.message || "Failed to retry videos",
+        variant: "destructive",
+      });
+    } finally {
+      setIsRetrying(false);
+    }
+  };
+
   return (
     <Card className="p-6 space-y-4 bg-gradient-card border-2 border-primary/20">
       <div className="flex items-center gap-2 pb-4 border-b border-border">
@@ -589,6 +668,35 @@ export const AdminPanel = () => {
                     <>
                       <FileText className="h-4 w-4" />
                       Process All Pending
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+
+            <div className="p-4 bg-destructive/10 border border-destructive/30 rounded-lg">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="font-semibold text-foreground">🔄 Retry Failed Videos</p>
+                  <p className="text-sm text-muted-foreground">
+                    Retry all failed transcriptions (resets status to pending)
+                  </p>
+                </div>
+                <Button
+                  onClick={retryFailedVideos}
+                  disabled={isRetrying}
+                  variant="outline"
+                  className="gap-2"
+                >
+                  {isRetrying ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Retrying...
+                    </>
+                  ) : (
+                    <>
+                      <FileText className="h-4 w-4" />
+                      Retry Failed
                     </>
                   )}
                 </Button>
