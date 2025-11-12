@@ -448,7 +448,7 @@ serve(async (req) => {
             },
             body: JSON.stringify({ 
               status: 'failed',
-              failure_reason: 'no_audio_or_captions'
+              error_reason: 'no_audio_or_captions'
             }),
           }
         );
