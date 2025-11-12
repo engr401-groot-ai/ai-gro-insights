@@ -7,7 +7,7 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const OPENAI_API_URL = 'https://api.openai.com/v1/audio/transcriptions';
+
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -28,7 +28,7 @@ serve(async (req) => {
     
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const openaiApiKey = Deno.env.get('OPENAI_API_KEY')!;
+    const modalEndpointUrl = Deno.env.get('MODAL_ENDPOINT_URL')!;
     
     const supabase = createClient(supabaseUrl, supabaseKey, {
       global: { headers: { Authorization: authHeader } }
@@ -83,24 +83,76 @@ serve(async (req) => {
         console.log(`Processing: ${video.title}`);
         console.log(`YouTube URL: ${video.url}`);
 
-        // Extract video ID from YouTube URL
-        const videoIdMatch = video.url.match(/(?:v=|\/)([a-zA-Z0-9_-]{11})/);
-        if (!videoIdMatch) {
-          throw new Error('Invalid YouTube URL');
-        }
-        const youtubeVideoId = videoIdMatch[1];
+        // Call Modal Whisper service
+        console.log("Submitting to Modal Whisper service...");
         
-        console.log("Fetching audio from YouTube...");
-        
-        // Note: OpenAI Whisper API requires actual audio files, but edge functions
-        // cannot easily extract audio from YouTube URLs without external tools.
-        // Recommended approaches:
-        // 1. Use the Modal Whisper service (see modal-whisper-service/README.md)
-        // 2. Use AssemblyAI which accepts YouTube URLs directly
-        // 3. Use start-transcription function which fetches YouTube captions
-        
-        throw new Error('YouTube audio extraction not supported in edge functions. Please use the Modal Whisper service, AssemblyAI, or start-transcription function instead.');
+        const modalResponse = await fetch(modalEndpointUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            video_url: video.url
+          }),
+        });
 
+        if (!modalResponse.ok) {
+          const errorText = await modalResponse.text();
+          throw new Error(`Modal Whisper error (${modalResponse.status}): ${errorText}`);
+        }
+
+        const transcriptionData = await modalResponse.json();
+        console.log("✓ Transcription completed!");
+
+        const transcriptionText = transcriptionData.text;
+        const segments = transcriptionData.segments || [];
+
+        if (!transcriptionText || transcriptionText.length < 50) {
+          throw new Error('Transcription resulted in no usable text');
+        }
+        
+        console.log(`Transcription completed: ${transcriptionText.length} characters, ${segments.length} segments`);
+
+        // Insert transcription
+        const { data: transcription, error: transcriptionError } = await supabase
+          .from('transcriptions')
+          .insert({
+            video_id: videoId,
+            full_text: transcriptionText,
+            language: 'en'
+          })
+          .select()
+          .single();
+
+        if (transcriptionError) {
+          throw transcriptionError;
+        }
+
+        console.log(`Processing ${segments.length} segments with timestamps...`);
+        
+        // Prepare segments for database insertion (Modal returns segments with start/end in seconds)
+        const segmentsData = segments.map((segment: any) => ({
+          transcription_id: transcription.id,
+          video_id: videoId,
+          segment_text: segment.text.trim(),
+          start_time: Math.floor(segment.start),
+          end_time: Math.floor(segment.end),
+        }));
+
+        // Insert in batches of 50 to avoid overwhelming the database
+        for (let i = 0; i < segmentsData.length; i += 50) {
+          const batch = segmentsData.slice(i, i + 50);
+          await supabase.from('transcript_segments').insert(batch);
+          console.log(`Inserted segment batch ${Math.floor(i/50) + 1}/${Math.ceil(segmentsData.length/50)}`);
+        }
+
+        // Update video status to completed
+        await supabase
+          .from('videos')
+          .update({ status: 'completed' })
+          .eq('id', videoId);
+
+        console.log(`✓ Transcription completed for: ${video.title}`);
       } catch (error) {
         console.error('Background transcription error:', error);
         // Update video status to failed
