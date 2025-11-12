@@ -9,6 +9,22 @@ const corsHeaders = {
 
 const ASSEMBLYAI_API_URL = 'https://api.assemblyai.com/v2';
 
+// Retry helper for calling other edge functions
+async function callWithRetry(url: string, init: RequestInit, max = 3): Promise<void> {
+  let err: unknown;
+  for (let i = 0; i < max; i++) {
+    const res = await fetch(url, init);
+    if (res.ok) return;
+    if ([429, 500, 502, 503, 504].includes(res.status)) {
+      await new Promise(r => setTimeout(r, Math.min(1000 * Math.pow(2, i), 10000)));
+      err = new Error(`${res.status} ${await res.text()}`);
+      continue;
+    }
+    throw new Error(`${res.status} ${await res.text()}`);
+  }
+  throw err ?? new Error('Function call failed after retries');
+}
+
 // Retry with exponential backoff
 async function fetchWithRetry(
   url: string,
@@ -251,6 +267,25 @@ serve(async (req) => {
 
           console.log(`✓ Completed: ${video.title}`);
           completed++;
+
+          // Trigger embeddings generation for this video
+          try {
+            await callWithRetry(
+              `${Deno.env.get('SUPABASE_URL')}/functions/v1/generate-embeddings`,
+              {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+                },
+                body: JSON.stringify({ youtube_id: video.youtube_id }),
+              }
+            );
+            console.log(`✓ Embeddings generation triggered for ${video.youtube_id}`);
+          } catch (embeddingError) {
+            console.error(`Failed to trigger embeddings for ${video.youtube_id}:`, embeddingError);
+            // Don't fail the whole process if embeddings fail
+          }
 
         } else if (transcriptionData.status === 'error') {
           await supabase

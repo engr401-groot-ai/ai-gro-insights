@@ -1,230 +1,134 @@
+// deno-lint-ignore-file no-explicit-any
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-};
+function env(name: string): string {
+  const v = Deno.env.get(name);
+  if (!v) throw new Error(`Missing env: ${name}`);
+  return v;
+}
+
+async function sb(path: string, init: RequestInit = {}) {
+  const url = `${env("SUPABASE_URL")}/rest/v1${path}`;
+  const headers = {
+    apikey: env("SUPABASE_SERVICE_ROLE_KEY"),
+    Authorization: `Bearer ${env("SUPABASE_SERVICE_ROLE_KEY")}`,
+    "Content-Type": "application/json",
+  };
+  return fetch(url, { ...init, headers: { ...headers, ...(init.headers as any) } });
+}
+
+async function embedBatch(chunks: { id: string; segment_text: string }[]) {
+  const body = {
+    input: chunks.map(c => c.segment_text),
+    model: "text-embedding-3-small",
+  };
+  const res = await fetch("https://api.openai.com/v1/embeddings", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${env("OPENAI_API_KEY")}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`);
+  const json = await res.json();
+  return json.data.map((d: any) => d.embedding as number[]);
+}
 
 serve(async (req) => {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders });
-  }
-
   try {
-    // Verify authentication
-    const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
-      return new Response(
-        JSON.stringify({ error: 'Authentication required' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+    if (req.method !== "POST") {
+      return new Response("Method Not Allowed", { status: 405 });
     }
 
-    const { videoId } = await req.json();
+    // Auth: require service-role (from caller)
+    const auth = req.headers.get("authorization") ?? "";
+    if (!auth.includes(env("SUPABASE_SERVICE_ROLE_KEY").slice(0, 12))) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+
+    const { youtube_id, limit = 500 } = await req.json();
+
+    if (!youtube_id) {
+      return new Response("Missing youtube_id", { status: 400 });
+    }
+
+    console.log(`Generating embeddings for youtube_id: ${youtube_id}`);
+
+    // 1) Get video_id from youtube_id
+    const videoRes = await sb(`/videos?select=id&youtube_id=eq.${youtube_id}&limit=1`);
+    if (!videoRes.ok) {
+      throw new Error(`Failed to fetch video: ${videoRes.status} ${await videoRes.text()}`);
+    }
+    const videos = await videoRes.json();
+    if (!Array.isArray(videos) || videos.length === 0) {
+      return new Response(`Video not found for youtube_id: ${youtube_id}`, { status: 404 });
+    }
+    const video_id = videos[0].id;
+
+    // 2) Pull unembedded segments for this video
+    const sel = await sb(
+      `/transcript_segments?select=id,segment_text&embedding=is.null&video_id=eq.${video_id}&limit=${limit}`
+    );
     
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const openaiApiKey = Deno.env.get('OPENAI_API_KEY')!;
+    if (!sel.ok) {
+      throw new Error(`Failed to fetch segments: ${sel.status} ${await sel.text()}`);
+    }
+
+    const segs = await sel.json();
     
-    const supabase = createClient(supabaseUrl, supabaseKey, {
-      global: { headers: { Authorization: authHeader } }
-    });
-
-    // Verify the user is authenticated
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) {
+    if (!Array.isArray(segs) || segs.length === 0) {
+      console.log(`No unembedded segments found for ${youtube_id}`);
       return new Response(
-        JSON.stringify({ error: 'Invalid authentication' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        JSON.stringify({ ok: true, embedded: 0 }),
+        { headers: { "Content-Type": "application/json" } }
       );
     }
 
-    // Check if user has admin role
-    const { data: roleData } = await supabase
-      .from('user_roles')
-      .select('role')
-      .eq('user_id', user.id)
-      .eq('role', 'admin')
-      .single();
+    console.log(`Found ${segs.length} segments to embed`);
 
-    if (!roleData) {
-      return new Response(
-        JSON.stringify({ error: 'Admin access required' }),
-        { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    console.log(`Generating embeddings for video ID: ${videoId}`);
-
-    // Get all segments for this video that don't have embeddings
-    const { data: segments, error: segmentsError } = await supabase
-      .from('transcript_segments')
-      .select('*')
-      .eq('video_id', videoId)
-      .is('embedding', null);
-
-    if (segmentsError) {
-      throw segmentsError;
-    }
-
-    // Get the full transcription if it doesn't have an embedding
-    const { data: transcription, error: transcriptionError } = await supabase
-      .from('transcriptions')
-      .select('*')
-      .eq('video_id', videoId)
-      .is('embedding', null)
-      .single();
-
-    if (transcriptionError && transcriptionError.code !== 'PGRST116') {
-      throw transcriptionError;
-    }
-
-    if ((!segments || segments.length === 0) && !transcription) {
-      return new Response(
-        JSON.stringify({ 
-          success: true, 
-          message: 'No content needs embeddings',
-          processedCount: 0
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
-    console.log(`Processing ${segments?.length || 0} segments and ${transcription ? '1' : '0'} full transcript`);
-    let processedCount = 0;
-
-    // First, process the full transcript if needed
-    if (transcription) {
-      console.log('Generating embedding for full transcript');
+    // 3) Batch in groups of 128 (safe for OpenAI)
+    const chunk = <T,>(arr: T[], n: number) => 
+      arr.reduce<T[][]>((a, _, i) => (i % n ? a : [...a, arr.slice(i, i + n)]), []);
+    
+    let total = 0;
+    const groups = chunk(segs, 128);
+    
+    for (let groupIndex = 0; groupIndex < groups.length; groupIndex++) {
+      const group = groups[groupIndex];
+      console.log(`Processing batch ${groupIndex + 1}/${groups.length} (${group.length} segments)`);
       
-      const embeddingResponse = await fetch('https://api.openai.com/v1/embeddings', {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${openaiApiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'text-embedding-3-small',
-          input: transcription.full_text,
-        }),
-      });
-
-      if (!embeddingResponse.ok) {
-        const errorText = await embeddingResponse.text();
-        console.error('OpenAI API error for transcript:', embeddingResponse.status, errorText);
-        throw new Error(`OpenAI API error (${embeddingResponse.status}): ${errorText}`);
-      }
-
-      const embeddingData = await embeddingResponse.json();
-      const embedding = embeddingData.data[0].embedding;
-
-      const { error: updateError } = await supabase
-        .from('transcriptions')
-        .update({ embedding })
-        .eq('id', transcription.id);
-
-      if (updateError) {
-        console.error('Error updating transcription:', updateError);
-        throw updateError;
-      }
-
-      console.log('Successfully embedded full transcript');
-      processedCount++;
-    }
-
-    // Process segments in batches to avoid rate limits
-    const batchSize = 20;
-    if (segments && segments.length > 0) {
-      for (let i = 0; i < segments.length; i += batchSize) {
-        const batch = segments.slice(i, i + batchSize);
-        const texts = batch.map(s => s.segment_text);
-
-        // Generate embeddings using OpenAI
-        const embeddingResponse = await fetch('https://api.openai.com/v1/embeddings', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${openaiApiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'text-embedding-3-small',
-            input: texts,
-          }),
-        });
-
-        if (!embeddingResponse.ok) {
-          const errorText = await embeddingResponse.text();
-          console.error('OpenAI API error:', embeddingResponse.status, errorText);
-          throw new Error(`OpenAI API error (${embeddingResponse.status}): ${errorText}`);
-        }
-
-        const embeddingData = await embeddingResponse.json();
-        console.log(`Received ${embeddingData.data?.length || 0} embeddings from OpenAI`);
-
-        // Update each segment with its embedding
-        for (let j = 0; j < batch.length; j++) {
-          const segment = batch[j];
-          const embedding = embeddingData.data[j].embedding;
-
-          console.log(`Updating segment ${segment.id} with embedding (${embedding.length} dimensions)`);
-
-          const { data: updateData, error: updateError } = await supabase
-            .from('transcript_segments')
-            .update({ embedding })
-            .eq('id', segment.id)
-            .select();
-
-          if (updateError) {
-            console.error(`Error updating segment ${segment.id}:`, updateError);
-            throw updateError;
-          }
-
-          if (!updateData || updateData.length === 0) {
-            console.error(`No rows updated for segment ${segment.id}`);
-            throw new Error(`Failed to update segment ${segment.id}`);
-          }
-
-          console.log(`Successfully updated segment ${segment.id}`);
-          processedCount++;
-        }
-
-        console.log(`Processed batch ${Math.floor(i / batchSize) + 1}, total: ${processedCount}`);
+      const vectors = await embedBatch(group);
+      
+      // 4) Patch embeddings back
+      for (let i = 0; i < group.length; i++) {
+        const seg = group[i];
+        const embedding = vectors[i];
         
-        // Small delay to avoid rate limits
-        if (i + batchSize < segments.length) {
-          await new Promise(resolve => setTimeout(resolve, 1000));
+        const upd = await sb(`/transcript_segments?id=eq.${seg.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ embedding }),
+          headers: { Prefer: "return=minimal" },
+        });
+        
+        if (!upd.ok) {
+          throw new Error(`Patch failed: ${upd.status} ${await upd.text()}`);
         }
       }
+      
+      total += group.length;
+      console.log(`✓ Embedded batch ${groupIndex + 1}/${groups.length}`);
     }
 
-    // Update video status to show it's fully processed
-    await supabase
-      .from('videos')
-      .update({ status: 'completed' })
-      .eq('id', videoId);
-
-    console.log(`Embeddings generation completed. Processed ${processedCount} items`);
+    console.log(`✓ Total embeddings generated: ${total}`);
 
     return new Response(
-      JSON.stringify({ 
-        success: true, 
-        processedCount,
-        totalSegments: segments?.length || 0,
-        fullTranscriptProcessed: !!transcription
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      JSON.stringify({ ok: true, embedded: total }),
+      { headers: { "Content-Type": "application/json" } }
     );
-
-  } catch (error) {
-    console.error('Error in generate-embeddings:', error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
-      { 
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-      }
-    );
+  } catch (e) {
+    console.error("generate-embeddings error:", e);
+    return new Response(`generate-embeddings error: ${String(e)}`, { status: 500 });
   }
 });
